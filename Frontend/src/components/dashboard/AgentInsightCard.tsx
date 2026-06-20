@@ -37,7 +37,7 @@ export const AgentInsightCard = memo(function AgentInsightCard({
     <div
       className={cn(
         "card-hover flex flex-col rounded-[1.35rem] p-4 ring-1",
-        featured ? "grad-violet-soft ring-ai/20" : "glass-inset ring-white/45",
+        featured ? "grad-sage-soft ring-ai/18" : "glass-inset ring-line",
         className
       )}
     >
@@ -57,7 +57,7 @@ export const AgentInsightCard = memo(function AgentInsightCard({
       <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-text-muted">{insight.body}</p>
 
       {onAction ? (
-        <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/45 pt-3">
+        <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-3">
           <p className="line-clamp-1 text-[11px] text-text-dim">{insight.suggestion}</p>
           {insight.action && (
             <Button
@@ -72,7 +72,7 @@ export const AgentInsightCard = memo(function AgentInsightCard({
           )}
         </div>
       ) : (
-        <div className="mt-3 flex items-start gap-2 rounded-2xl bg-ai/[0.07] p-3 text-xs text-text ring-1 ring-ai/15">
+        <div className="mt-3 flex items-start gap-2 rounded-2xl bg-accent/[0.06] p-3 text-xs text-text ring-1 ring-ai/15">
           <ArrowRight className="mt-0.5 size-3.5 shrink-0 text-ai" />
           <span className="leading-relaxed">{insight.suggestion}</span>
         </div>

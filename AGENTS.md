@@ -30,35 +30,38 @@ Demo athlete = tennis player with a recurring **right-knee soreness / overtraini
 ## Aurora Glass Dashboard Design System
 
 This is the current frontend visual source of truth. Future frontend work must follow the
-**Aurora Glass Dashboard** style and must not revert to the old light Soft UI direction.
+**Aurora Glass Dashboard** style in its approved white / green direction. Do not revert to the
+old dark blue / purple futuristic direction, and do not flatten it into a generic plain SaaS UI.
 
-**Visual style direction:** futuristic glassmorphism dashboard with Apple-like softness and a
-dense premium SaaS command-center layout. The UI should feel like one translucent product window
-floating over a blue / violet / pink aurora background.
+**Visual style direction:** clean, premium, calm glassmorphism-inspired dashboard with Apple-like
+softness and a compact SaaS command-center layout. The UI should feel like one polished product
+window floating over a white, soft off-white, or very pale green background.
 
-**Color palette:** deep blue and sky-blue base, lavender and violet midtones, soft pink glow
-areas, white primary text, muted icy-blue secondary text, cyan/lavender highlights, and semantic
-status colors tuned for dark glass: mint/teal positive, warm amber warning, pink negative, icy
-blue neutral, and lavender AI.
+**Color palette:** white, off-white, and very pale green backgrounds; mint, sage, emerald, and
+teal-green accents; dark charcoal or deep green-gray primary text; muted gray-green secondary
+text; soft green-tinted borders; and semantic status colors tuned for a light glass interface:
+green positive, soft amber warning, muted rose negative only where needed, teal neutral, and
+sage/emerald AI.
 
 **Typography rules:** use Inter/system sans. Keep labels small, uppercase, and widely tracked.
 Use medium/semi-bold weights rather than heavy bold. Metric values use `tabular-nums`, large type,
-and high-contrast white or softly glowing accent colors.
+and high-contrast dark text or emerald/teal accent colors.
 
 **Layout rules:** the app shell is a centered rounded glass container with an internal left
 sidebar divider, compact top toolbar, bento dashboard grid, and optional right AI rail. Desktop
 should feel information-rich without becoming crowded; tablet and mobile stack cards cleanly.
 
-**Glassmorphism rules:** major surfaces use translucent blue/lavender backgrounds,
-`backdrop-filter` only on large shell/card surfaces, 1px translucent white borders, inner highlight
-lines, and soft blue/purple glow shadows. Avoid flat white cards. Avoid heavy blur on tiny repeated
-children to keep hover/selection smooth.
+**Glassmorphism rules:** major surfaces use translucent white or green-tinted glass, soft blur on
+large shell/card surfaces, 1px light green-tinted borders, inner highlight lines, soft shadows, and
+subtle mint/emerald glow. Keep the interface slightly glassy and premium. Avoid dark purple/blue
+glass as the main theme, avoid harsh neon green, and avoid plain flat white cards. Avoid heavy blur
+on tiny repeated children to keep hover/selection smooth.
 
-**Component rules:** sidebar nav uses rounded glass pills with a bright active white pill and soft
-glow. Header inputs/actions are frosted pills. Cards, chart containers, lists, chat bubbles,
-badges, and buttons must share the same translucent glass language. Charts use faint white grids
-with cyan/lavender/pink series. Tables/lists use translucent rows and glowing hover states, not
-default table styling.
+**Component rules:** sidebar nav uses rounded glass pills with a soft green active state and
+subtle glow. Header inputs/actions are frosted pills. Cards, chart containers, lists, chat bubbles,
+badges, and buttons must share the same white/green glass language. Charts use light green-gray
+grids with emerald/sage/teal series. Tables/lists use compact glass rows and subtle pale-green
+hover states, not default table styling.
 
 **Animation rules:** transitions are subtle, 180-250ms, and limited to transform, opacity,
 background, border, and color. Use CSS transitions/keyframes instead of JS-driven hover animation.
@@ -72,23 +75,30 @@ module-level and prop identities stable. Prefer CSS-only hover lift and one-shot
 
 ## Reference Alignment
 
-The provided dashboard reference confirms the active direction: **Aurora Glass Dashboard**.
-Any older notes about clean light Soft UI, white cards, or a plain SaaS dashboard are retired.
-Future work must preserve the existing visual language and only simplify density.
+The approved dashboard direction is now the white / green **Aurora Glass Dashboard**. The previous
+blue / purple / pink dark-glass direction is retired. Future work must preserve the current clean,
+premium, calm glassmorphism language and only simplify density when needed.
 
 Required direction:
 
 - Keep the glassmorphism dashboard style.
-- Keep the blue / purple / pink glowing gradient UI.
-- Keep translucent cards, frosted panels, and soft blur on large surfaces.
-- Keep rounded panels, compact controls, and subtle neon highlights.
-- Do **not** revert to a plain white SaaS UI.
+- Use white, soft off-white, and very pale green backgrounds.
+- Use mint, sage, emerald, and teal-green accents.
+- Keep translucent or softly frosted cards, rounded panels, subtle glow, and soft blur on large surfaces.
+- Keep dark charcoal or deep green-gray text for readability.
+- Use soft green-tinted borders, light dividers, and subtle shadows.
+- Keep rounded panels, compact controls, and clean green highlights.
+- Do **not** revert to a plain flat SaaS UI.
+- Do **not** revert to the dark futuristic purple/blue theme.
+- Avoid purple/blue as the main theme.
 - Do **not** redesign into a completely different style.
-- Only simplify, compact, and prioritize the existing dashboard.
+- Keep the dashboard compact, aligned, laptop-focused, and easy to scan.
+- Preserve AI chat usability, internal scrolling, and alignment.
+- Only simplify, compact, and prioritize the existing dashboard; do not add unnecessary data sections.
 
-The reference image should be read as a density and composition guide: one translucent command
-window, compact sidebar/header, a small set of high-impact KPI cards, one main chart, one compact
-secondary visual/status area, and only the most useful alerts or activity summaries.
+The dashboard should be read as a density and composition guide: one polished product window,
+compact sidebar/header, a small set of high-impact KPI cards, one main chart, one compact
+secondary visual/status area, a useful alert/action summary, and a fully usable AI chat rail.
 
 ---
 
@@ -108,42 +118,43 @@ secondary visual/status area, and only the most useful alerts or activity summar
 
 ## Design system
 
-**Aesthetic:** blue / violet / pink aurora canvas with one rounded translucent app shell. Cards
-are glass panels: translucent blue/lavender fills, 1px white borders, inner highlight lines,
-subtle glow, and soft blur only on larger surfaces. The dashboard should feel futuristic,
-premium, compact, and readable at a glance.
+**Aesthetic:** white / off-white / very pale green canvas with one rounded translucent app shell.
+Cards are softly frosted white/green glass panels with light green-tinted borders, inner highlight
+lines, subtle mint glow, and soft blur only on larger surfaces. The dashboard should feel clean,
+premium, calm, compact, modern, slightly glassy, and readable at a glance.
 
 **Color tokens** (defined as CSS vars in `src/index.css`, consumed via Tailwind):
 
 | Token | Value | Use |
 |---|---|---|
-| `--bg` | `#172C86` | deep blue base behind aurora gradients |
-| `--surface` | `rgba(93,139,255,0.22)` | translucent glass card base |
-| `--surface-2` | `rgba(255,255,255,0.10)` | frosted nested rows / chips |
-| `--surface-3` | `rgba(255,255,255,0.07)` | low-emphasis glass fills |
-| `--line` | `rgba(255,255,255,0.18)` | faint glass dividers |
-| `--text` | `#F8FBFF` | key numbers, headings, labels on glass |
-| `--text-muted` | `rgba(235,244,255,0.74)` | secondary labels |
-| `--text-dim` | `rgba(220,232,255,0.50)` | tertiary meta |
-| `--accent` | `#8FB6FF` | neutral highlights and chart series |
-| `--positive` | `#7EF5D1` | recovery good, wins |
-| `--warning` | `#FFD079` | risk, caution |
-| `--negative` | `#FF8DB0` | losses, high risk |
-| `--ai` | `#D4B4FF` | AI / agent surfaces |
+| `--bg` | `#F6FBF7` | white / pale green page base |
+| `--surface` | `rgba(255,255,255,0.56)` | translucent white glass card base |
+| `--surface-2` | `rgba(226,246,236,0.58)` | frosted nested rows / chips |
+| `--surface-3` | `rgba(212,238,225,0.38)` | low-emphasis green-tinted glass fills |
+| `--line` | `rgba(69,133,105,0.18)` | light green-gray dividers |
+| `--text` | `#17332B` | key numbers, headings, labels |
+| `--text-muted` | `rgba(36,65,56,0.76)` | secondary labels |
+| `--text-dim` | `rgba(64,92,82,0.54)` | tertiary meta |
+| `--accent` | `#1F9F68` | primary emerald action/accent |
+| `--positive` | `#25B97D` | recovery good, wins |
+| `--warning` | `#B9861E` | risk, caution |
+| `--negative` | `#C85F76` | losses, high risk |
+| `--ai` | `#4E9A7F` | AI / agent surfaces |
 
-**Elevation:** `.glass-card` remains a translucent frosted surface, never a white card. Depth
-comes from low-opacity blue/purple glow shadows and inner white highlights. Avoid animating blur
-or large shadows on hover.
+**Elevation:** `.glass-card` is a light frosted surface with translucent white/green tint. Depth
+comes from low-opacity green glow shadows, light green borders, and inner white highlights. Avoid
+animating blur or large shadows on hover.
 
-**Gradients:** keep the blue / violet / pink aurora and soft neon accents. Use gradients to
-support hierarchy inside the existing glass language, not as a new theme.
+**Gradients:** use white, mint, sage, emerald, and teal gradients sparingly to support hierarchy
+inside the existing glass language. Avoid purple/blue as the main theme and avoid harsh lime or
+oversaturated neon green.
 
-**Status semantics:** mint/teal = good/low-risk/win, amber = medium/caution, pink = high-risk/loss,
-icy blue = neutral/performance, lavender = agent/AI. Every metric carries a status that drives
+**Status semantics:** green = good/low-risk/win, amber = medium/caution, muted rose = high-risk/loss,
+teal/sage = neutral/performance, emerald/sage = agent/AI. Every metric carries a status that drives
 its accent.
 
 **Typography:** Inter/system sans. Labels are small uppercase tracked text. Values use
-`tabular-nums`, medium/semi-bold weights, and high-contrast white or softly glowing accents.
+`tabular-nums`, medium/semi-bold weights, and high-contrast dark text or emerald/teal accents.
 
 ---
 
@@ -188,7 +199,7 @@ crowd the default laptop view.
 - `SectionCard` — glass shell: title, icon, optional subtitle, **section-level AI action button**
   (slot), children. Every section is a `SectionCard`.
 - `MetricCard` — icon + uppercase label + big tabular value + trend/status line + status accent.
-- `AgentInsightCard` — violet-tinted callout: which agent produced it + insight + suggested
+- `AgentInsightCard` — sage/emerald-tinted callout: which agent produced it + insight + suggested
   adjustment. Used in Recovery and AI surfaces to make the agent layer legible.
 - `ui/` primitives: `Button`, `Badge`, `cn()` util.
 

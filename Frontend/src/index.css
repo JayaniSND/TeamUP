@@ -2,48 +2,48 @@
 
 /* ------------------------------------------------------------------ */
 /*  Athlete Analytics OS — design tokens                              */
-/*  Aurora Glass Dashboard: blue / violet / pink gradient canvas,     */
-/*  translucent app shell, neon glass cards, and lightweight motion.  */
+/*  White / green dashboard runtime tokens.                           */
+/*  Current experiment: solid white cards over the approved backdrop. */
 /* ------------------------------------------------------------------ */
 
 @theme {
-  --color-bg: #172c86;
-  --color-surface: rgba(93, 139, 255, 0.22);
-  --color-surface-2: rgba(255, 255, 255, 0.1);
-  --color-surface-3: rgba(255, 255, 255, 0.07);
+  --color-bg: #f6fbf7;
+  --color-surface: #ffffff;
+  --color-surface-2: #fbfefd;
+  --color-surface-3: #f3faf6;
 
-  --color-text: #f8fbff;
-  --color-text-muted: rgba(235, 244, 255, 0.74);
-  --color-text-dim: rgba(220, 232, 255, 0.5);
+  --color-text: #17332b;
+  --color-text-muted: rgba(36, 65, 56, 0.76);
+  --color-text-dim: rgba(64, 92, 82, 0.54);
 
-  --color-line: rgba(255, 255, 255, 0.18);
-  --color-glass-line: rgba(255, 255, 255, 0.28);
+  --color-line: rgba(69, 111, 93, 0.14);
+  --color-glass-line: rgba(79, 137, 111, 0.22);
 
-  --color-accent: #8fb6ff;
-  --color-positive: #7ef5d1;
-  --color-warning: #ffd079;
-  --color-negative: #ff8db0;
-  --color-ai: #d4b4ff;
-  --color-lime: #d9ff58;
+  --color-accent: #1f9f68;
+  --color-positive: #25b97d;
+  --color-warning: #b9861e;
+  --color-negative: #c85f76;
+  --color-ai: #4e9a7f;
+  --color-lime: #9bd9ad;
 
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
 
   --radius-2xl: 1.125rem;
   --radius-3xl: 1.65rem;
 
-  --shadow-soft: 0 18px 50px -34px rgba(18, 28, 94, 0.72);
-  --shadow-glass: 0 1px 0 rgba(255, 255, 255, 0.32) inset, 0 28px 80px -38px rgba(8, 20, 82, 0.78);
-  --shadow-hover: 0 1px 0 rgba(255, 255, 255, 0.42) inset, 0 26px 70px -42px rgba(147, 188, 255, 0.95);
-  --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.22) inset, 0 12px 32px -18px rgba(191, 205, 255, 0.9);
+  --shadow-soft: 0 18px 50px -34px rgba(39, 98, 72, 0.28);
+  --shadow-glass: 0 1px 0 rgba(255, 255, 255, 0.96) inset, 0 22px 60px -44px rgba(41, 95, 67, 0.3);
+  --shadow-hover: 0 1px 0 rgba(255, 255, 255, 1) inset, 0 24px 62px -44px rgba(40, 148, 99, 0.34);
+  --shadow-pop: 0 0 0 1px rgba(111, 190, 150, 0.28) inset, 0 12px 32px -18px rgba(40, 164, 104, 0.52);
 }
 
 :root {
   color-scheme: light;
-  --glass-panel: rgba(86, 133, 255, 0.22);
-  --glass-panel-strong: rgba(139, 178, 255, 0.26);
-  --glass-panel-soft: rgba(255, 255, 255, 0.09);
-  --glass-border: rgba(255, 255, 255, 0.24);
-  --glass-border-muted: rgba(255, 255, 255, 0.13);
+  --glass-panel: rgba(255, 255, 255, 0.94);
+  --glass-panel-strong: rgba(255, 255, 255, 0.98);
+  --glass-panel-soft: rgba(248, 253, 250, 0.94);
+  --glass-border: rgba(80, 135, 111, 0.18);
+  --glass-border-muted: rgba(87, 126, 109, 0.12);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -64,10 +64,10 @@ body,
 body {
   margin: 0;
   background:
-    radial-gradient(54rem 36rem at 3% 92%, rgba(255, 125, 235, 0.62), transparent 58%),
-    radial-gradient(50rem 30rem at 98% 6%, rgba(207, 255, 244, 0.7), transparent 48%),
-    radial-gradient(46rem 32rem at 56% 6%, rgba(138, 132, 255, 0.58), transparent 56%),
-    linear-gradient(135deg, #9c72d6 0%, #426fe5 43%, #42a4f5 100%),
+    radial-gradient(54rem 36rem at 4% 96%, rgba(199, 238, 213, 0.92), transparent 58%),
+    radial-gradient(50rem 30rem at 98% 4%, rgba(203, 244, 232, 0.88), transparent 50%),
+    radial-gradient(46rem 32rem at 52% 2%, rgba(232, 249, 237, 0.9), transparent 58%),
+    linear-gradient(135deg, #ffffff 0%, #f5fbf7 46%, #eaf7ef 100%),
     var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
@@ -81,9 +81,9 @@ body {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(34rem 24rem at 11% 9%, rgba(255, 255, 255, 0.18), transparent 58%),
-    radial-gradient(22rem 20rem at 92% 8%, rgba(218, 255, 252, 0.35), transparent 62%),
-    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.12) 1px, transparent 0);
+    radial-gradient(34rem 24rem at 11% 9%, rgba(255, 255, 255, 0.58), transparent 58%),
+    radial-gradient(22rem 20rem at 92% 8%, rgba(187, 235, 215, 0.46), transparent 62%),
+    radial-gradient(circle at 1px 1px, rgba(74, 137, 109, 0.12) 1px, transparent 0);
   background-size: auto, auto, 24px 24px;
   opacity: 0.78;
   mask-image: linear-gradient(to bottom, black 0%, black 85%, transparent 100%);
@@ -92,27 +92,27 @@ body {
 .glass-card {
   position: relative;
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(61, 115, 255, 0.15)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035));
+    linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(252, 255, 253, 0.96)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 253, 250, 0.94));
   border: 1px solid var(--glass-border);
   box-shadow: var(--shadow-glass);
-  backdrop-filter: blur(22px) saturate(1.45);
-  -webkit-backdrop-filter: blur(22px) saturate(1.45);
+  backdrop-filter: blur(10px) saturate(1.08);
+  -webkit-backdrop-filter: blur(10px) saturate(1.08);
 }
 
 .aurora-shell {
   position: relative;
   background:
-    radial-gradient(56rem 34rem at 96% 0%, rgba(211, 255, 251, 0.26), transparent 54%),
-    radial-gradient(44rem 32rem at 8% 98%, rgba(255, 113, 227, 0.24), transparent 58%),
-    linear-gradient(135deg, rgba(130, 111, 255, 0.28), rgba(42, 115, 232, 0.34) 52%, rgba(66, 177, 255, 0.28));
-  border: 1px solid rgba(255, 255, 255, 0.28);
+    radial-gradient(56rem 34rem at 96% 0%, rgba(224, 248, 235, 0.72), transparent 54%),
+    radial-gradient(44rem 32rem at 8% 98%, rgba(215, 239, 224, 0.56), transparent 58%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(246, 252, 248, 0.82) 52%, rgba(235, 248, 241, 0.74));
+  border: 1px solid rgba(105, 158, 135, 0.22);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.36),
-    0 30px 110px -40px rgba(15, 35, 136, 0.95),
-    0 0 60px rgba(210, 241, 255, 0.28);
-  backdrop-filter: blur(24px) saturate(1.35);
-  -webkit-backdrop-filter: blur(24px) saturate(1.35);
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 30px 100px -50px rgba(44, 111, 76, 0.38),
+    0 0 52px rgba(145, 216, 177, 0.12);
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
 }
 
 .glass-card::before {
@@ -122,22 +122,22 @@ body {
   pointer-events: none;
   content: "";
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.34),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.12);
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 0 rgba(83, 150, 116, 0.06);
 }
 
 .glass-inset {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.15), rgba(118, 159, 255, 0.08));
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(250, 254, 252, 0.96));
+  border: 1px solid rgba(94, 139, 119, 0.14);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    0 12px 28px -22px rgba(12, 27, 96, 0.72);
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    0 12px 28px -24px rgba(42, 103, 75, 0.22);
 }
 
 .glass-chip {
-  background: rgba(255, 255, 255, 0.13);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(96, 138, 121, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.96);
 }
 
 .card-hover {
@@ -148,7 +148,7 @@ body {
 }
 .card-hover:hover {
   transform: translate3d(0, -2px, 0);
-  border-color: rgba(255, 255, 255, 0.36);
+  border-color: rgba(72, 156, 111, 0.34);
 }
 .card-hover:active {
   transform: translate3d(0, 0, 0);
@@ -171,49 +171,48 @@ body {
 
 .grad-primary {
   background:
-    radial-gradient(24rem 18rem at 22% 14%, rgba(255, 255, 255, 0.24), transparent 62%),
-    radial-gradient(22rem 18rem at 90% 70%, rgba(255, 135, 224, 0.35), transparent 62%),
-    linear-gradient(135deg, rgba(146, 122, 255, 0.36) 0%, rgba(71, 129, 255, 0.42) 54%, rgba(91, 194, 255, 0.36) 100%);
+    radial-gradient(18rem 14rem at 88% 8%, rgba(141, 220, 174, 0.22), transparent 56%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(249, 254, 251, 0.98) 60%, rgba(235, 249, 241, 0.9) 100%);
 }
-.grad-violet-soft {
+.grad-sage-soft {
   background:
-    radial-gradient(16rem 12rem at 20% 10%, rgba(255, 143, 230, 0.24), transparent 58%),
-    linear-gradient(135deg, rgba(178, 134, 255, 0.2), rgba(95, 154, 255, 0.16));
+    radial-gradient(14rem 11rem at 92% 12%, rgba(135, 204, 166, 0.18), transparent 58%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(249, 254, 251, 0.96));
 }
 .grad-peach {
   background:
-    radial-gradient(16rem 12rem at 80% 20%, rgba(255, 255, 255, 0.18), transparent 58%),
-    linear-gradient(135deg, rgba(255, 142, 215, 0.26) 0%, rgba(255, 196, 120, 0.18) 48%, rgba(91, 196, 255, 0.18) 100%);
+    radial-gradient(14rem 11rem at 92% 10%, rgba(185, 134, 30, 0.14), transparent 58%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(250, 254, 252, 0.96));
 }
 .grad-sky {
   background:
-    radial-gradient(18rem 14rem at 18% 18%, rgba(255, 255, 255, 0.2), transparent 60%),
-    linear-gradient(135deg, rgba(148, 215, 255, 0.25) 0%, rgba(130, 159, 255, 0.2) 52%, rgba(216, 180, 255, 0.18) 100%);
+    radial-gradient(14rem 11rem at 92% 10%, rgba(72, 159, 146, 0.16), transparent 58%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(249, 254, 251, 0.96));
 }
 .grad-lime {
   background:
-    radial-gradient(18rem 14rem at 30% 32%, rgba(217, 255, 88, 0.22), transparent 58%),
-    linear-gradient(135deg, rgba(135, 255, 210, 0.25) 0%, rgba(133, 170, 255, 0.2) 56%, rgba(255, 146, 216, 0.18) 100%);
+    radial-gradient(14rem 11rem at 92% 10%, rgba(37, 185, 125, 0.18), transparent 58%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(249, 254, 251, 0.96));
 }
 
 .mesh-lines {
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.09) 1px, transparent 1px);
+    linear-gradient(rgba(70, 135, 104, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(70, 135, 104, 0.08) 1px, transparent 1px);
   background-size: 34px 34px;
   mask-image: radial-gradient(circle at 50% 40%, black, transparent 70%);
 }
 
 .scroll-thin {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
+  scrollbar-color: rgba(61, 140, 101, 0.32) transparent;
 }
 .scroll-thin::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 .scroll-thin::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.24);
+  background: rgba(61, 140, 101, 0.32);
   border-radius: 9999px;
 }
 .scroll-thin::-webkit-scrollbar-track {

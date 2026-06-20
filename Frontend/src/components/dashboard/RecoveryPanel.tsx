@@ -28,13 +28,13 @@ export const RecoveryPanel = memo(function RecoveryPanel({
             <HeartPulse className="size-4" strokeWidth={1.75} />
           </span>
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-white">Recovery</h2>
+            <h2 className="truncate text-sm font-semibold text-text">Recovery</h2>
             <p className="truncate text-[10px] text-text-dim">Wellness signal</p>
           </div>
         </div>
         <button
           onClick={onAction}
-          className="glass-chip shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white transition-colors hover:bg-white/18"
+          className="glass-chip shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold text-text transition-colors hover:bg-accent/7"
         >
           Check
         </button>
@@ -61,7 +61,7 @@ export const RecoveryPanel = memo(function RecoveryPanel({
             <Gauge className="size-3" /> Fatigue
           </div>
           <div className="tnum mt-0.5 text-base font-semibold text-text">{recovery.fatigueLevel}%</div>
-          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/18 ring-1 ring-white/25">
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/95 ring-1 ring-accent/14">
             <div className="h-full rounded-full bg-warning" style={{ width: `${recovery.fatigueLevel}%` }} />
           </div>
         </div>
@@ -86,7 +86,7 @@ export const RecoveryPanel = memo(function RecoveryPanel({
               <span
                 key={d.day}
                 title={`${d.day}: ${d.value}`}
-                className="flex-1 rounded-t bg-gradient-to-t from-warning/65 to-pink-200/80 shadow-[0_0_10px_rgba(255,141,176,0.16)]"
+                className="flex-1 rounded-t bg-gradient-to-t from-[#2563eb]/70 to-[#38bdf8]/70 shadow-[0_0_10px_rgba(37,99,235,0.16)]"
                 style={{ height: `${Math.max(18, d.value)}%` }}
               />
             ))}
@@ -95,7 +95,7 @@ export const RecoveryPanel = memo(function RecoveryPanel({
       </div>
 
       {insight && (
-        <div className="mt-2 truncate rounded-xl bg-ai/[0.08] px-2.5 py-1.5 text-[10px] leading-relaxed text-text-muted ring-1 ring-ai/16">
+        <div className="mt-2 truncate rounded-xl bg-accent/[0.06] px-2.5 py-1.5 text-[10px] leading-relaxed text-text-muted ring-1 ring-ai/16">
           <span className="font-semibold text-ai">Suggested adjustment · </span>
           {insight.suggestion}
         </div>
