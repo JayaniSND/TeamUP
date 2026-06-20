@@ -42,6 +42,51 @@ def _structured(model: str, system: str, user: str, schema: dict, max_tokens: in
     return json.loads(text)
 
 
+# ── Gateway intent router (ASI:One front door) ─────────────────────
+# Framework v4 §6a: one chat interface, Claude reads intent and routes.
+#   log    → it's a journal dump to file (Librarian)
+#   ask    → an open-ended history/pattern question → RAG over /chat
+#   action → a domain request handled by a specific specialist agent
+_INTENT_SYSTEM = (
+    "You route an individual athlete's chat message to the right handler in a "
+    "sports-analytics assistant. Choose ONE intent:\n"
+    "• 'log' — the athlete is recording what happened (practice/match/how they "
+    "feel). e.g. 'just finished practice, serve felt sharp, knee sore again'.\n"
+    "• 'ask' — an open-ended history/pattern question best answered by searching "
+    "across their journal. e.g. 'how has my serve been trending', 'what patterns "
+    "do you see in my losses', 'what should I focus on next week'. Set agent=none.\n"
+    "• 'action' — a request a specific specialist owns. Set agent to:\n"
+    "    recovery    — body/fatigue/overtraining ('am I overtrained', 'how's my body')\n"
+    "    performance — win/loss or form summaries ('how am I performing')\n"
+    "    sponsorship — sponsor fit or outreach drafting ('find sponsors', 'draft outreach')\n"
+    "    logistics   — tournaments/travel/calendar ('find a tournament', 'add to calendar')\n"
+    "When unsure between 'ask' and 'action', prefer 'ask'. Only use 'log' when the "
+    "athlete is clearly reporting events, not asking a question."
+)
+
+_INTENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intent": {"type": "string", "enum": ["log", "ask", "action"]},
+        "agent": {
+            "type": "string",
+            "enum": ["recovery", "performance", "sponsorship", "logistics", "none"],
+        },
+    },
+    "required": ["intent", "agent"],
+    "additionalProperties": False,
+}
+
+
+def _classify_intent_sync(message: str) -> dict:
+    return _structured(config.CLASSIFY_MODEL, _INTENT_SYSTEM, message, _INTENT_SCHEMA, 256)
+
+
+async def classify_intent(message: str) -> dict:
+    """Return {'intent': log|ask|action, 'agent': recovery|...|none}."""
+    return await asyncio.to_thread(_classify_intent_sync, message)
+
+
 # ── Librarian: classify ────────────────────────────────────────────
 _CLASSIFY_SYSTEM = (
     "You are the Librarian for an individual athlete's self-building sports "
@@ -85,14 +130,24 @@ async def classify(dump: str) -> list[dict]:
     return await asyncio.to_thread(_classify_sync, dump)
 
 
-# ── Recovery: overtraining / wellness ──────────────────────────────
+# ── Recovery: overtraining / wellness (passive linguistic-drift) ───
+# Framework v4 §6.2: don't just keyword-match injuries — read ~14 days of
+# entries across ALL sections for linguistic drift (serve "explosive" →
+# "muscling through", a body side described with rising negativity, load
+# spikes with no rest language), even before the athlete mentions pain.
 _RECOVERY_SYSTEM = (
-    "You are the Recovery agent for an individual athlete. Given the newest "
-    "recovery/training note plus recent history and metrics, decide whether "
-    "there is an overtraining or injury-risk pattern (same body part sore 3+ "
-    "sessions, a training-volume spike, or a declining recovery score with "
-    "complaints). Be conservative and cite what you saw. This is wellness and "
-    "self-management guidance, NOT medical diagnosis."
+    "You are the Recovery agent for an individual athlete, reading like a sports "
+    "physiologist. You are given the athlete's recent journal entries across ALL "
+    "sections (roughly the last 14 days), plus structured recovery logs, training, "
+    "and metrics. Look for an overtraining or injury-risk pattern, including subtle "
+    "LINGUISTIC DRIFT — not just explicit injury keywords. Flag things like: the "
+    "same skill described with falling energy over time (e.g. 'explosive' → "
+    "'muscling through'), a body part referenced with increasing negativity, or a "
+    "training-load spike with no rest/recovery language — even if the athlete has "
+    "not used the word 'pain'. Also flag the classic signals: same body part sore "
+    "3+ sessions, volume spike, or a declining recovery score with complaints. Be "
+    "conservative and quote what you actually saw. This is wellness and self-"
+    "management guidance, NOT medical diagnosis."
 )
 
 _RECOVERY_SCHEMA = {
@@ -109,25 +164,27 @@ _RECOVERY_SCHEMA = {
 }
 
 
-def _assess_recovery_sync(note, recovery_logs, training, metrics) -> dict:
+def _assess_recovery_sync(note, recent_entries, recovery_logs, training, metrics) -> dict:
     ctx = {
         "new_note": note,
-        "recent_recovery": recovery_logs,
+        "recent_entries_14d": recent_entries,
+        "recent_recovery_logs": recovery_logs,
         "recent_training": training,
         "recent_metrics": metrics,
     }
     return _structured(
         config.SYNTHESIS_MODEL,
         _RECOVERY_SYSTEM,
-        "Assess recovery/overtraining risk from this data:\n" + json.dumps(ctx, indent=2),
+        "Assess recovery/overtraining risk (including linguistic drift) from this "
+        "data:\n" + json.dumps(ctx, indent=2),
         _RECOVERY_SCHEMA,
         1024,
     )
 
 
-async def assess_recovery(note, recovery_logs, training, metrics) -> dict:
+async def assess_recovery(note, recent_entries, recovery_logs, training, metrics) -> dict:
     return await asyncio.to_thread(
-        _assess_recovery_sync, note, recovery_logs, training, metrics
+        _assess_recovery_sync, note, recent_entries, recovery_logs, training, metrics
     )
 
 

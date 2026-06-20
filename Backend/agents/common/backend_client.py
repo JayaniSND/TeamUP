@@ -90,3 +90,14 @@ async def recent_recovery_logs(user_id, limit=10) -> list[dict]:
 
 async def athlete_profile(user_id) -> dict:
     return await _get("/athlete_profile", {"user_id": user_id}) or {}
+
+
+async def recent_agent_outputs(user_id, section=None, limit=10) -> list[dict]:
+    rows = await _get("/agent_outputs", {"user_id": user_id, "limit": limit}) or []
+    return [r for r in rows if not section or r.get("section") == section]
+
+
+async def chat(user_id, question) -> dict:
+    """Ask the backend's RAG /chat endpoint (Coaching/Chat agent). Returns
+    {answer, sources} or {} if unreachable."""
+    return await _post("/chat", {"user_id": user_id, "question": question}) or {}

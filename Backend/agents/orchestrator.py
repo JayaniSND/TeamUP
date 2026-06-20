@@ -87,6 +87,7 @@ async def _inline_specialist(name: str, user_id: str, note: str) -> str:
     if name == "recovery":
         v = await claude.assess_recovery(
             note,
+            await backend.recent_entries(user_id, limit=40),
             await backend.recent_recovery_logs(user_id),
             await backend.recent_training(user_id),
             await backend.recent_metrics(user_id),
@@ -149,10 +150,11 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     await ctx.send(sender, make_ack(msg))
     if is_start(msg):
         await ctx.send(sender, make_chat(
-            "👋 I'm BASELINE — the sports analytics dashboard that builds itself "
-            "from your logs. Brain-dump after practice or a match (text or voice "
-            "transcript) and I'll file it, track your form, watch for overtraining, "
-            "line up events, and surface sponsor fits."
+            "👋 I'm BASELINE — your sports analytics assistant. Two things you can do:\n"
+            "• Log: brain-dump after practice/a match and I'll file it, track your "
+            "form, watch for overtraining, and surface sponsor fits.\n"
+            "• Ask: 'how's my serve trending?', 'am I overtrained?', 'find me a "
+            "tournament' — I'll route it to the right place and answer."
         ))
         return
 
@@ -166,7 +168,62 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     elif kind == "result":
         await _on_result(ctx, env)
     else:
+        await _on_user_message(ctx, sender, env)
+
+
+async def _on_user_message(ctx: Context, sender: str, env: dict):
+    """ASI:One gateway: read intent, then log / answer / act (framework v4 §6a)."""
+    user_id, message = env["user_id"], env["text"]
+    intent = await claude.classify_intent(message)
+    ctx.logger.info("Intent=%s agent=%s", intent.get("intent"), intent.get("agent"))
+
+    if intent.get("intent") == "ask":
+        await _handle_ask(ctx, sender, user_id, message)
+    elif intent.get("intent") == "action" and intent.get("agent") not in (None, "none"):
+        await _handle_action(ctx, sender, user_id, message, intent["agent"])
+    else:  # "log" — file it through the Librarian
         await _on_new_dump(ctx, sender, env)
+
+
+async def _handle_ask(ctx: Context, user: str, user_id: str, question: str):
+    """History/pattern question → RAG over the backend's /chat, relay the answer."""
+    res = await backend.chat(user_id, question)
+    answer = (res or {}).get("answer")
+    if not answer:
+        await ctx.send(user, make_chat(
+            "I couldn't reach the chat/RAG service to answer that yet.", end_session=True
+        ))
+        return
+    n = len((res or {}).get("sources") or [])
+    suffix = f"\n\n_(grounded in {n} of your journal entries)_" if n else ""
+    await ctx.send(user, make_chat(answer + suffix, end_session=True))
+
+
+async def _handle_action(ctx: Context, user: str, user_id: str, message: str, agent: str):
+    """Domain request → the specialist that owns it."""
+    addr = config.address_for(agent)
+    if not addr:
+        if agent in ("recovery", "performance", "sponsorship"):
+            summary = await _inline_specialist(agent, user_id, message)
+            await ctx.send(user, make_chat(summary or "Done.", end_session=True))
+        else:  # logistics (external) not configured
+            await ctx.send(user, make_chat(
+                f"The {agent} agent isn't connected yet.", end_session=True
+            ))
+        return
+    if agent == "logistics":
+        await ctx.send(addr, make_chat(encode_envelope(user_id, message)))
+        await ctx.send(user, make_chat(
+            "📅 Handed that to the logistics agent — it'll update your schedule.",
+            end_session=True,
+        ))
+        return
+    # recovery / performance / sponsorship: run and relay the one result
+    req_id = uuid4().hex
+    _save(ctx, req_id, {"user": user, "user_id": user_id, "pending": 1, "summaries": []})
+    await ctx.send(addr, make_chat(
+        encode_envelope(user_id, message, kind="run", agent=agent, req_id=req_id)
+    ))
 
 
 async def _on_new_dump(ctx: Context, sender: str, env: dict):

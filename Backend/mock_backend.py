@@ -12,15 +12,21 @@ Run:  uvicorn mock_backend:app --reload   (from Backend/)
 from __future__ import annotations
 
 import itertools
+import json
+import os
 from datetime import datetime, timedelta, timezone
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel
+
+load_dotenv()  # so the /chat RAG stub can read ANTHROPIC_API_KEY
 
 app = FastAPI(title="BASELINE mock backend (data backend stand-in)")
 
 _ids = itertools.count(1)
 DB: dict[str, list[dict]] = {
+    "raw_inputs": [],
     "entries": [],
     "training_sessions": [],
     "match_results": [],
@@ -30,6 +36,72 @@ DB: dict[str, list[dict]] = {
     "sponsorship_opportunities": [],
     "agent_outputs": [],
 }
+
+_SECTIONS = [
+    "training", "performance", "match_results", "recovery",
+    "coaching", "logistics", "sponsorship", "goals", "media_notes",
+]
+
+
+def _extract_image_text(image_data: str, media_type: str) -> str:
+    """Claude vision: base64 image → raw transcript."""
+    import anthropic
+    resp = anthropic.Anthropic().messages.create(
+        model=os.environ.get("SYNTHESIS_MODEL", "claude-sonnet-4-6"),
+        max_tokens=2000,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_data}},
+                {"type": "text", "text": (
+                    "Transcribe all handwritten or printed text in this image exactly as written. "
+                    "Output only the transcription, no commentary, no markdown formatting."
+                )},
+            ],
+        }],
+    )
+    return "".join(b.text for b in resp.content if b.type == "text").strip()
+
+
+def _classify_entries(raw_text: str) -> list[dict]:
+    """Claude haiku: raw text → [{section, text}] entries."""
+    import anthropic
+    schema = {
+        "type": "object",
+        "properties": {
+            "entries": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "section": {"type": "string", "enum": _SECTIONS},
+                        "text": {"type": "string"},
+                    },
+                    "required": ["section", "text"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["entries"],
+        "additionalProperties": False,
+    }
+    resp = anthropic.Anthropic().messages.create(
+        model=os.environ.get("CLASSIFY_MODEL", "claude-haiku-4-5"),
+        max_tokens=2048,
+        system=(
+            "You are the Librarian for an individual athlete's sports analytics dashboard. "
+            "Split the athlete's raw input into discrete entries. Each entry is one coherent "
+            "thought filed under exactly one section. Preserve meaning; lightly clean filler "
+            "words; do not invent content."
+        ),
+        output_config={"format": {"type": "json_schema", "schema": schema}},
+        messages=[{"role": "user", "content": raw_text}],
+    )
+    text_out = next((b.text for b in resp.content if b.type == "text"), "{}")
+    return [e for e in json.loads(text_out).get("entries", [])
+            if e.get("section") in _SECTIONS and e.get("text")]
+
+
 PROFILE = {
     "user_id": "demo-athlete",
     "name": "Demo Athlete",
@@ -49,6 +121,22 @@ def _ts(days_ago: int) -> str:
 
 
 def _seed():
+    # Linguistic-drift trail: serve language quietly degrades over 2 weeks with
+    # no explicit "pain" word — what the passive Recovery sweep should catch.
+    for section, text, days in [
+        ("training", "Serve felt explosive today, easy power, snapping through the ball.", 14),
+        ("performance", "First serves were popping — free points all session.", 13),
+        ("training", "Good serve rhythm, felt effortless and loose.", 11),
+        ("training", "Serve was okay, had to work a bit harder for pace.", 9),
+        ("performance", "Serve felt heavy, kind of grinding through it today.", 7),
+        ("training", "Really muscling the serve now, shoulder feels tight afterward.", 4),
+        ("training", "Pushed through another long serving block, no rest day this week.", 2),
+        ("performance", "Serve speed up on paper but it's costing me — arm feels dead.", 1),
+    ]:
+        DB["entries"].append({
+            "entry_id": next(_ids), "user_id": "demo-athlete",
+            "section": section, "text": text, "ts": _ts(days), "meta": {},
+        })
     for section, text, days in [
         ("recovery", "Right knee a bit sore after hill repeats.", 6),
         ("training", "60 min on court, lots of footwork drills.", 6),
@@ -130,6 +218,14 @@ class SponsorshipIn(BaseModel):
     draft_email: str = ""
 
 
+class IngestIn(BaseModel):
+    user_id: str = "demo-athlete"
+    input_type: str          # "text" | "image" | "voice"
+    text: str | None = None  # for text / voice
+    image_data: str | None = None        # base64-encoded bytes for images
+    image_media_type: str = "image/jpeg"
+
+
 def _by_user(table: str, user_id: str, limit: int, section: str | None = None):
     rows = [r for r in DB[table] if r.get("user_id") == user_id]
     if section:
@@ -139,6 +235,74 @@ def _by_user(table: str, user_id: str, limit: int, section: str | None = None):
 
 
 # ── core endpoints ─────────────────────────────────────────────────
+@app.post("/ingest")
+def ingest(body: IngestIn):
+    """Accept photo, voice transcript, or text → classify → write entries.
+
+    input_type='image'  requires image_data (base64) + optional image_media_type.
+    input_type='text'   requires text.
+    input_type='voice'  requires text (the Deepgram transcript from the frontend).
+    """
+    if body.input_type not in ("text", "image", "voice"):
+        return {"error": "input_type must be 'text', 'image', or 'voice'"}
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    # 1 — resolve raw text
+    if body.input_type == "image":
+        if not body.image_data:
+            return {"error": "image_data (base64) required for input_type='image'"}
+        if not api_key:
+            return {"error": "ANTHROPIC_API_KEY required for image ingestion"}
+        raw_text = _extract_image_text(body.image_data, body.image_media_type)
+    else:
+        if not body.text or not body.text.strip():
+            return {"error": "text required for input_type='text' or 'voice'"}
+        raw_text = body.text.strip()
+
+    if not raw_text:
+        return {"error": "No text extracted or provided"}
+
+    # 2 — classify into sections
+    if api_key:
+        entries_data = _classify_entries(raw_text)
+    else:
+        # No API key: single catch-all entry so the endpoint still works for tests
+        entries_data = [{"section": "training", "text": raw_text}]
+
+    # 3 — persist raw input + entries
+    ts = datetime.now(timezone.utc).isoformat()
+    raw_input_id = next(_ids)
+    DB["raw_inputs"].append({
+        "raw_input_id": raw_input_id,
+        "user_id": body.user_id,
+        "input_type": body.input_type,
+        "raw_text": raw_text,
+        "ts": ts,
+    })
+    written = []
+    for e in entries_data:
+        entry_id = next(_ids)
+        DB["entries"].append({
+            "entry_id": entry_id,
+            "user_id": body.user_id,
+            "section": e["section"],
+            "text": e["text"],
+            "raw_input_id": raw_input_id,
+            "ts": ts,
+            "meta": {},
+        })
+        written.append({"entry_id": entry_id, "section": e["section"], "text": e["text"]})
+
+    return {
+        "raw_input_id": raw_input_id,
+        "input_type": body.input_type,
+        "entries_count": len(written),
+        "sections": sorted({e["section"] for e in written}),
+        "entries": written,
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -263,3 +427,39 @@ def dashboard_logistics(user_id: str):
 @app.get("/dashboard/sponsorship")
 def dashboard_sponsorship(user_id: str):
     return {"opportunities": _by_user("sponsorship_opportunities", user_id, 20)}
+
+
+# ── /chat : RAG-lite stand-in for the real Coaching/Chat agent ─────
+# The real backend does RedisVL KNN retrieval (framework v4 §6b). This stub
+# uses recency instead of vector search, then Claude for the grounded answer,
+# so the agent layer's "ask" path is testable end-to-end without Redis.
+class ChatIn(BaseModel):
+    user_id: str
+    question: str
+
+
+@app.post("/chat")
+def chat(body: ChatIn):
+    entries = _by_user("entries", body.user_id, 15)
+    if not entries:
+        return {"answer": "I don't have any journal entries for you yet.", "sources": []}
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        joined = "; ".join(e["text"] for e in entries[:5])
+        return {"answer": f"(no ANTHROPIC_API_KEY set) Recent entries: {joined}",
+                "sources": [e["entry_id"] for e in entries[:5]]}
+    import anthropic
+
+    context = "\n\n".join(f"[{e['section'].upper()}] {e['text']}" for e in entries)
+    prompt = (
+        "You are a sports performance analyst reviewing an athlete's journal. "
+        "Answer using ONLY the entries below. Be specific — quote what they wrote. "
+        "If the entries lack enough information, say so.\n\n"
+        f"JOURNAL ENTRIES:\n{context}\n\nQUESTION: {body.question}"
+    )
+    resp = anthropic.Anthropic().messages.create(
+        model=os.environ.get("SYNTHESIS_MODEL", "claude-sonnet-4-6"),
+        max_tokens=800,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    answer = next((b.text for b in resp.content if b.type == "text"), "")
+    return {"answer": answer, "sources": [e["entry_id"] for e in entries]}
