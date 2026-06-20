@@ -1,0 +1,342 @@
+import type { AthleteData } from "@/types/athlete";
+
+/**
+ * Realistic mock data for a single tennis athlete.
+ *
+ * Isolated here so it can be replaced 1:1 by API calls later (see types in
+ * `types/athlete.ts`). The storyline is deliberately coherent with the backend
+ * seed in `Backend/mock_backend.py`: recurring RIGHT-KNEE soreness + a training
+ * volume spike → the Recovery agent flags an overtraining risk pattern, and the
+ * dashboard surfaces it. Tennis player, mid-season, San Jose Open coming up.
+ *
+ * NOTE: this is a module-level constant on purpose — it is created once, never
+ * re-derived on render, so memoized panels never see new prop identities.
+ */
+export const athleteData: AthleteData = {
+  profile: {
+    name: "Maya Chen",
+    sport: "Tennis · Singles",
+    level: "ITF Pro · Open Division",
+    handle: "@mayachen",
+    currentWeek: "Week 24 · 2026 Season",
+    avatarInitials: "MC",
+    worldRank: 184,
+  },
+
+  goal: {
+    title: "Break into the Top 150",
+    target: "Top 150",
+    progressPct: 62,
+    detail: "World #184 → #150 by season end",
+  },
+
+  intake: {
+    capturedAt: "2h ago",
+    sources: ["voice", "notebook"],
+    summary:
+      "“Knee a little sore after serve practice — hit ~80 min, won the tune-up set 6-4, felt sharp on returns.”",
+    agent: "Librarian",
+    filed: [
+      { label: "Training · +1 session", status: "neutral" },
+      { label: "Recovery · knee soreness", status: "warning" },
+      { label: "Match · result logged", status: "positive" },
+    ],
+  },
+
+  // Trimmed to the three numbers that matter most at a glance — big, simple.
+  overview: [
+    {
+      id: "winrate",
+      label: "Win Rate",
+      value: "63%",
+      detail: "5W · 3L · last 8",
+      status: "positive",
+      icon: "Trophy",
+    },
+    {
+      id: "recovery",
+      label: "Recovery",
+      value: "55",
+      detail: "Medium risk · right knee",
+      status: "warning",
+      icon: "HeartPulse",
+    },
+    {
+      id: "event",
+      label: "Next Match",
+      value: "12 days",
+      detail: "San Jose Open · Hard court",
+      status: "neutral",
+      icon: "CalendarDays",
+    },
+  ],
+
+  performance: [
+    { date: "Mon", trainingLoad: 52, recoveryScore: 78, matchPerformance: null },
+    { date: "Tue", trainingLoad: 64, recoveryScore: 74, matchPerformance: 71 },
+    { date: "Wed", trainingLoad: 48, recoveryScore: 72, matchPerformance: null },
+    { date: "Thu", trainingLoad: 76, recoveryScore: 64, matchPerformance: 58 },
+    { date: "Fri", trainingLoad: 70, recoveryScore: 61, matchPerformance: null },
+    { date: "Sat", trainingLoad: 88, recoveryScore: 55, matchPerformance: 82 },
+    { date: "Sun", trainingLoad: 60, recoveryScore: 59, matchPerformance: null },
+  ],
+
+  training: {
+    sessions: [
+      {
+        id: "s1",
+        date: "Sat · Jun 13",
+        focus: "Serve consistency + court footwork",
+        durationMin: 95,
+        intensity: "Peak",
+        section: "training",
+      },
+      {
+        id: "s2",
+        date: "Thu · Jun 11",
+        focus: "Long baseline rally session",
+        durationMin: 80,
+        intensity: "High",
+        section: "training",
+      },
+      {
+        id: "s3",
+        date: "Wed · Jun 10",
+        focus: "Footwork drills + light hitting",
+        durationMin: 60,
+        intensity: "Moderate",
+        section: "training",
+      },
+      {
+        id: "s4",
+        date: "Mon · Jun 8",
+        focus: "Hill repeats + conditioning",
+        durationMin: 55,
+        intensity: "High",
+        section: "training",
+      },
+    ],
+    weeklyTotalMin: 290,
+    suggestedFocus:
+      "Cap total load this week and protect the right knee — shift one high-intensity block to technical serve work.",
+  },
+
+  matches: [
+    {
+      id: "m1",
+      date: "Jun 13",
+      opponent: "R. Alvarez",
+      result: "W",
+      score: "6-4, 7-5",
+      note: "Serve held up under pressure. Closed out tight second set.",
+    },
+    {
+      id: "m2",
+      date: "Jun 7",
+      opponent: "K. Novak",
+      result: "L",
+      score: "3-6, 6-4, 4-6",
+      note: "Faded physically in the third — knee tightened up late.",
+    },
+    {
+      id: "m3",
+      date: "Jun 1",
+      opponent: "S. Whitman",
+      result: "W",
+      score: "6-2, 6-3",
+      note: "Dominant from the baseline, high first-serve percentage.",
+    },
+    {
+      id: "m4",
+      date: "May 26",
+      opponent: "L. Park",
+      result: "W",
+      score: "7-6, 6-4",
+      note: "Clutch tiebreak. Movement was sharp all match.",
+    },
+    {
+      id: "m5",
+      date: "May 20",
+      opponent: "D. Ferreira",
+      result: "L",
+      score: "4-6, 5-7",
+      note: "Second-serve return cost points on key games.",
+    },
+  ],
+
+  // Recent matches for the win/loss form graph (oldest → newest).
+  form: [
+    { id: "f1", label: "May 12", opponent: "M. Sato", result: "W", score: "6-3, 6-4", value: 73 },
+    { id: "f2", label: "May 16", opponent: "P. Adler", result: "L", score: "5-7, 4-6", value: 48 },
+    { id: "f3", label: "May 20", opponent: "D. Ferreira", result: "L", score: "4-6, 5-7", value: 45 },
+    { id: "f4", label: "May 26", opponent: "L. Park", result: "W", score: "7-6, 6-4", value: 71 },
+    { id: "f5", label: "Jun 1", opponent: "S. Whitman", result: "W", score: "6-2, 6-3", value: 82 },
+    { id: "f6", label: "Jun 7", opponent: "K. Novak", result: "L", score: "3-6, 6-4, 4-6", value: 51 },
+    { id: "f7", label: "Jun 10", opponent: "J. Reyes", result: "W", score: "6-3, 7-5", value: 77 },
+    { id: "f8", label: "Jun 13", opponent: "R. Alvarez", result: "W", score: "6-4, 7-5", value: 84 },
+  ],
+
+  recovery: {
+    risk: "warning",
+    riskLabel: "Medium",
+    sorenessTrend: [
+      { day: "Jun 8", value: 35 },
+      { day: "Jun 10", value: 48 },
+      { day: "Jun 11", value: 52 },
+      { day: "Jun 13", value: 64 },
+    ],
+    fatigueLevel: 62,
+    sleepHours: 6.8,
+    focusArea: "Right knee",
+  },
+
+  schedule: {
+    events: [
+      { id: "e1", title: "San Jose Open · R1", date: "Jul 2", location: "San Jose, CA", kind: "tournament" },
+      { id: "e2", title: "Travel → San Jose", date: "Jun 30", location: "Flight · 2h 15m", kind: "travel" },
+      { id: "e3", title: "Tune-up exhibition", date: "Jun 24", location: "Oakland TC", kind: "match" },
+      { id: "e4", title: "Serve clinic w/ coach", date: "Jun 22", location: "Home club", kind: "training" },
+    ],
+    travelChecklist: [
+      { id: "c1", label: "Confirm hotel near venue", done: true },
+      { id: "c2", label: "Restring 3 rackets", done: false },
+      { id: "c3", label: "Knee support + recovery kit", done: false },
+      { id: "c4", label: "Submit player entry form", done: true },
+    ],
+  },
+
+  sponsorship: [
+    {
+      id: "sp1",
+      brand: "Baseline Athletics",
+      category: "Apparel",
+      fitScore: 92,
+      reason: "Sponsors rising ITF singles players; audience overlap is strong.",
+      status: "Suggested",
+    },
+    {
+      id: "sp2",
+      brand: "ReGen Recovery",
+      category: "Wellness tech",
+      fitScore: 87,
+      reason: "Your recovery storyline is on-brand for their athlete program.",
+      status: "Drafted",
+    },
+    {
+      id: "sp3",
+      brand: "CourtGrip",
+      category: "Equipment",
+      fitScore: 74,
+      reason: "Regional grip brand looking for hard-court ambassadors.",
+      status: "In review",
+    },
+  ],
+
+  // Agent-produced insights — the legible face of the autonomous agent layer.
+  // The first is the Orchestrator's headline recommendation (featured); the
+  // rest are per-agent updates. Each can pipe a question into the AI panel.
+  insights: [
+    {
+      id: "i0",
+      agent: "Orchestrator",
+      status: "ai",
+      icon: "Sparkles",
+      title: "Recommended next action",
+      body: "Across recovery, training and schedule, the highest-leverage move this week is load management before San Jose.",
+      suggestion: "Swap Friday's peak block for technical serve work and bank one recovery day.",
+      action: { label: "Apply to plan", prompt: "Generate next week's plan with a lighter load.", replyId: "p9" },
+    },
+    {
+      id: "i1",
+      agent: "Recovery",
+      status: "warning",
+      icon: "HeartPulse",
+      title: "Right-knee risk pattern",
+      body: "Soreness logged after 3 of the last 4 sessions while weekly load rose 18%. The signal is trending up, not settling.",
+      suggestion: "Suggested adjustment: a lighter day this week and a recovery block before the exhibition.",
+      action: { label: "Check recovery risk", prompt: "Check my recovery risk.", replyId: "p3" },
+    },
+    {
+      id: "i2",
+      agent: "Scout",
+      status: "positive",
+      icon: "TrendingUp",
+      title: "Serve trend improving",
+      body: "First-serve percentage climbed 58% → 67% over your last 5 sessions, even as recovery dipped.",
+      suggestion: "Hold the gains by keeping serve work technical rather than high-load.",
+      action: { label: "Explain trend", prompt: "Explain my recent performance trend.", replyId: "p6" },
+    },
+    {
+      id: "i3",
+      agent: "Logistics",
+      status: "warning",
+      icon: "Plane",
+      title: "Pre-tournament prep is behind",
+      body: "San Jose Open is 12 days out — 3 rackets unstrung and no recovery slot booked for travel week.",
+      suggestion: "Restring this week and block a mobility session the day before R1.",
+      action: { label: "Plan travel", prompt: "Plan my travel and prep for the San Jose Open.", replyId: "p7" },
+    },
+    {
+      id: "i4",
+      agent: "Scout",
+      status: "ai",
+      icon: "Handshake",
+      title: "Sponsor fit: Baseline Athletics",
+      body: "92% brand fit — they back rising ITF singles players and your audience overlaps strongly.",
+      suggestion: "Draft a short pitch using your recent 3W/2L run as proof points.",
+      action: { label: "Draft email", prompt: "Draft a sponsorship email to Baseline Athletics.", replyId: "p4" },
+    },
+  ],
+
+  suggestedPrompts: [
+    { id: "p1", text: "What should I focus on next week?", section: "Overview" },
+    { id: "p6", text: "Explain my performance trend", section: "Performance" },
+    { id: "p3", text: "Check my recovery risk", section: "Recovery" },
+    { id: "p5", text: "Summarize my last 7 days", section: "Training" },
+    { id: "p8", text: "Find my next tournament", section: "Schedule" },
+    { id: "p4", text: "Draft a sponsorship email", section: "Sponsorship" },
+  ],
+};
+
+/**
+ * Canned assistant replies keyed by prompt id, so the chat feels connected to
+ * the dashboard without a backend. Swap for `/chat` responses later.
+ */
+export const cannedReplies: Record<string, { text: string; sources?: string[] }> = {
+  p1: {
+    text: "Next week, protect the right knee while keeping serve sharp. Cap total load near 240 min, move one high-intensity block to technical serve work, and bank a recovery day before the San Jose Open. Recovery flagged a rising soreness pattern, so prioritize quality over volume.",
+    sources: ["injury_log", "training", "metrics"],
+  },
+  p2: {
+    text: "Your last 5 are 3W/2L. Both losses (Novak, Ferreira) turned on second-serve return games, and the Novak match faded in a third set as the knee tightened. It reads as a stamina + return-consistency issue rather than a form drop.",
+    sources: ["performance", "injury_log"],
+  },
+  p3: {
+    text: "Recovery risk is medium. Weekly load is up 18% vs. your 4-week average and recovery score dropped from 78 to 55, while right-knee soreness was logged after 3 of the last 4 sessions. That's a rising pattern, not overtraining yet. Suggested adjustment: one lighter day and a recovery block this week.",
+    sources: ["metrics", "injury_log"],
+  },
+  p4: {
+    text: "Drafted a pitch to Baseline Athletics tying your rising-ITF-singles storyline to their athlete program, with your recent 3W/2L run and San Jose Open appearance as proof points. It's saved as a draft for your review — nothing is sent until you approve.",
+    sources: ["sponsorship", "performance"],
+  },
+  p5: {
+    text: "Last 7 days: 4 sessions / 290 min, skewing high-to-peak intensity — heavy on serve and baseline work, light on recovery. Serve consistency and footwork improved; the conditioning blocks line up with the right-knee soreness spikes. One win logged (Alvarez, 6-4 7-5).",
+    sources: ["training", "coaching"],
+  },
+  p6: {
+    text: "The trend: training load climbed into the high zone while recovery slid from 78 to 55 across the week. Match performance held up (peaked Saturday at 82) and first-serve % is up 58→67%. Net read — form is improving but you're spending recovery to get it. Ease the load to keep the serve gains.",
+    sources: ["performance", "metrics"],
+  },
+  p7: {
+    text: "For the San Jose Open (12 days out): restring 3 rackets this week, pack your knee support + recovery kit, and book a mobility session the day before R1. I'd hold a lighter travel-week training block so you arrive fresh. Nothing's added to your calendar until you confirm.",
+    sources: ["logistics", "training"],
+  },
+  p8: {
+    text: "Your next confirmed event is the San Jose Open (hard court, 12 days out). Two more fit your level and surface in the following six weeks — the Sacramento Challenger and the Stockton ITF. Want me to pencil them in and check travel?",
+    sources: ["logistics", "performance"],
+  },
+  p9: {
+    text: "Here's a lighter week that protects the knee: 2 technical serve sessions, 1 recovery/mobility day, 1 match-play block — about 230 min total (down from 290). Friday's peak conditioning becomes serve-precision work. Want this on your calendar?",
+    sources: ["training", "injury_log", "metrics"],
+  },
+};
