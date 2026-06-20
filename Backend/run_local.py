@@ -22,16 +22,19 @@ from uagents_core.contrib.protocols.chat import (
     chat_protocol_spec,
 )
 
-from agents import librarian, orchestrator, recovery
+from agents import librarian, orchestrator, performance, recovery, sponsorship
 from agents.common import config
 from agents.common.chat import make_ack, make_chat, text_of
 
 # Wire the orchestrator to the real worker addresses for this process.
 config.LIBRARIAN_ADDRESS = librarian.agent.address
 config.RECOVERY_ADDRESS = recovery.agent.address
+config.PERFORMANCE_ADDRESS = performance.agent.address
+config.SPONSORSHIP_ADDRESS = sponsorship.agent.address
 
 DUMP = (
     "Worked on my serve today, felt sharp and the toss was consistent. "
+    "Won my match 6-3, 6-4 against Rivera. "
     "Right knee was sore again after the long session. "
     "Got a tournament in San Jose in two weeks I want to enter."
 )
@@ -66,9 +69,13 @@ if __name__ == "__main__":
     print("Orchestrator:", orchestrator.agent.address)
     print("Librarian:   ", librarian.agent.address)
     print("Recovery:    ", recovery.agent.address)
+    print("Performance: ", performance.agent.address)
+    print("Sponsorship: ", sponsorship.agent.address)
     bureau = Bureau()
     bureau.add(orchestrator.agent)
     bureau.add(librarian.agent)
     bureau.add(recovery.agent)
+    bureau.add(performance.agent)
+    bureau.add(sponsorship.agent)
     bureau.add(user)
     bureau.run()

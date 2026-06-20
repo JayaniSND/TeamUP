@@ -1,13 +1,12 @@
-"""Recovery agent — flags fatigue / soreness / overtraining patterns.
+"""Performance agent — summarizes win/loss and skill trends.
 
-Pulls the athlete's recent recovery logs, training, and metrics, asks Claude
-for an overtraining assessment, writes a visible insight to `agent_outputs`,
-and replies. Framed as wellness/self-management, not medical diagnosis.
+Reads recent match results, training, and metrics, asks Claude for a grounded
+performance summary, and writes a visible insight to `agent_outputs`.
 
 Speaks the Agent Chat Protocol (usable via ASI:One/Agentverse and callable by
 the Orchestrator).
 
-Run:  python -m agents.recovery   (from Backend/)
+Run:  python -m agents.performance   (from Backend/)
 """
 
 from __future__ import annotations
@@ -31,39 +30,38 @@ from .common.chat import (
 )
 
 agent = Agent(
-    name="recovery",
-    seed=config.RECOVERY_SEED,
-    port=config.RECOVERY_PORT,
+    name="performance",
+    seed=config.PERFORMANCE_SEED,
+    port=config.PERFORMANCE_PORT,
     mailbox=True,
 )
 chat_proto = Protocol(spec=chat_protocol_spec)
 
 
 def _format(v: dict) -> str:
-    if v.get("risk_level", "none") in ("none", "low") and not v.get("body_parts"):
-        return "✅ Recovery: no overtraining pattern in your recent history."
-    parts = ", ".join(v.get("body_parts") or []) or "an area"
     return (
-        f"⚠️ Recovery flag — risk {v.get('risk_level', 'unknown')} ({parts}).\n"
+        f"📈 Performance ({v.get('trend', 'unknown')}).\n"
         f"   {v.get('summary', '').strip()}\n"
-        f"   👉 {v.get('recommended_action', '').strip()}"
+        f"   Strongest: {v.get('strongest_area', '—')} | "
+        f"Weakest: {v.get('weakest_area', '—')}\n"
+        f"   👉 Focus: {v.get('recommended_focus', '').strip()}"
     )
 
 
-async def _assess(user_id: str, note: str) -> dict:
-    logs = await backend.recent_recovery_logs(user_id, limit=10)
+async def _analyze(user_id: str, note: str) -> dict:
+    matches = await backend.recent_match_results(user_id, limit=10)
     training = await backend.recent_training(user_id, limit=10)
     metrics = await backend.recent_metrics(user_id, limit=20)
-    verdict = await claude.assess_recovery(note, logs, training, metrics)
+    v = await claude.analyze_performance(note, matches, training, metrics)
     await backend.create_agent_output(
         user_id,
-        agent_name="Recovery Agent",
-        section="recovery",
-        summary=verdict.get("summary", ""),
-        severity=verdict.get("severity", "info"),
-        recommended_action=verdict.get("recommended_action", ""),
+        agent_name="Performance Agent",
+        section="performance",
+        summary=v.get("summary", ""),
+        severity="info",
+        recommended_action=v.get("recommended_focus", ""),
     )
-    return verdict
+    return v
 
 
 @chat_proto.on_message(ChatMessage)
@@ -71,8 +69,8 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     await ctx.send(sender, make_ack(msg))
     if is_start(msg):
         await ctx.send(sender, make_chat(
-            "👋 Recovery agent ready. Send a soreness/fatigue note and I'll check "
-            "for overtraining patterns."
+            "👋 Performance agent ready. Log a match or training note and I'll "
+            "track your form and trends."
         ))
         return
 
@@ -80,14 +78,14 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     if not raw.strip():
         return
     env = decode_envelope(raw, config.DEFAULT_USER_ID)
-    verdict = await _assess(env["user_id"], env["text"])
-    summary = _format(verdict)
-    ctx.logger.info("Recovery risk=%s for %s", verdict.get("risk_level"), env["user_id"])
+    v = await _analyze(env["user_id"], env["text"])
+    summary = _format(v)
+    ctx.logger.info("Performance trend=%s for %s", v.get("trend"), env["user_id"])
 
     if env.get("kind") == "run" and env.get("req_id"):
         await ctx.send(sender, make_chat(encode_envelope(
             env["user_id"], env["text"],
-            kind="result", agent="recovery", req_id=env["req_id"], summary=summary,
+            kind="result", agent="performance", req_id=env["req_id"], summary=summary,
         )))
     else:
         await ctx.send(sender, make_chat(summary, end_session=True))
@@ -101,5 +99,5 @@ async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
 agent.include(chat_proto, publish_manifest=True)
 
 if __name__ == "__main__":
-    print(f"[recovery] address: {agent.address}")
+    print(f"[performance] address: {agent.address}")
     agent.run()

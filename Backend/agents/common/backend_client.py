@@ -1,15 +1,8 @@
-"""Thin async client for Dev 2's FastAPI (the data + RAG spine).
+"""Thin async client for Dev 2's FastAPI (the data spine).
 
-Every call is resilient: if the backend is down or returns an error we log
-and degrade gracefully (return an empty list / None) rather than crashing
-the agent. That keeps the agent demo-able even before Dev 2's service is up
-— point BACKEND_URL at the bundled mock backend and it just works.
-
-Endpoints used (from the locked API contract in the build plan):
-  POST /entries          -> {entry_id}
-  GET  /entries          -> [{entry_id, section, text, ts, meta}]
-  GET  /progress         -> [{ts, value}]
-  POST /recovery_flags   -> {flag_id}   (Recovery surfaces a flag here)
+Every call degrades gracefully: if the backend is down it logs and returns an
+empty list / None rather than crashing the agent. Point BACKEND_URL at the
+bundled mock backend to run the whole chain before Dev 2's service exists.
 """
 
 from __future__ import annotations
@@ -21,57 +14,79 @@ import httpx
 from . import config
 
 log = logging.getLogger("backend_client")
-
 _TIMEOUT = httpx.Timeout(10.0)
 
 
-async def create_entry(user_id: str, section: str, text: str, meta: dict | None = None):
-    """POST a single classified entry. Returns the created entry_id or None."""
-    payload = {"user_id": user_id, "section": section, "text": text, "meta": meta or {}}
+async def _get(path: str, params: dict):
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-            r = await c.post(f"{config.BACKEND_URL}/entries", json=payload)
-            r.raise_for_status()
-            return r.json().get("entry_id")
-    except Exception as e:  # noqa: BLE001 - degrade gracefully
-        log.warning("create_entry failed (%s): %s", config.BACKEND_URL, e)
-        return None
-
-
-async def recent_entries(user_id: str, section: str, limit: int = 10) -> list[dict]:
-    """GET recent entries for a user, optionally filtered by section."""
-    params = {"user_id": user_id, "section": section, "limit": limit}
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-            r = await c.get(f"{config.BACKEND_URL}/entries", params=params)
+            r = await c.get(f"{config.BACKEND_URL}{path}", params=params)
             r.raise_for_status()
             return r.json()
     except Exception as e:  # noqa: BLE001
-        log.warning("recent_entries failed: %s", e)
-        return []
+        log.warning("GET %s failed: %s", path, e)
+        return None
 
 
-async def recent_metrics(user_id: str, limit: int = 20) -> list[dict]:
-    """GET recent metric rows (volume, recovery score, etc.)."""
+async def _post(path: str, payload: dict):
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+            r = await c.post(f"{config.BACKEND_URL}{path}", json=payload)
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:  # noqa: BLE001
+        log.warning("POST %s failed: %s", path, e)
+        return None
+
+
+# ── writes ─────────────────────────────────────────────────────────
+async def create_entry(user_id, section, text, meta=None):
+    res = await _post("/entries", {"user_id": user_id, "section": section, "text": text, "meta": meta or {}})
+    return (res or {}).get("entry_id")
+
+
+async def create_agent_output(user_id, agent_name, section, summary,
+                              severity="info", recommended_action="", related_entry_ids=None):
+    res = await _post("/agent_outputs", {
+        "user_id": user_id,
+        "agent_name": agent_name,
+        "section": section,
+        "summary": summary,
+        "severity": severity,
+        "recommended_action": recommended_action,
+        "related_entry_ids": related_entry_ids or [],
+    })
+    return (res or {}).get("output_id")
+
+
+async def create_sponsorship_opportunity(user_id, opp: dict):
+    res = await _post("/sponsorship_opportunities", {"user_id": user_id, **opp})
+    return (res or {}).get("opportunity_id")
+
+
+# ── reads ──────────────────────────────────────────────────────────
+async def recent_entries(user_id, section=None, limit=10) -> list[dict]:
     params = {"user_id": user_id, "limit": limit}
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-            r = await c.get(f"{config.BACKEND_URL}/metrics", params=params)
-            r.raise_for_status()
-            return r.json()
-    except Exception as e:  # noqa: BLE001
-        log.warning("recent_metrics failed: %s", e)
-        return []
+    if section:
+        params["section"] = section
+    return await _get("/entries", params) or []
 
 
-async def create_recovery_flag(user_id: str, assessment: dict):
-    """POST a Recovery overtraining flag the dashboard surfaces."""
-    payload = {"user_id": user_id, **assessment}
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-            r = await c.post(f"{config.BACKEND_URL}/recovery_flags", json=payload)
-            r.raise_for_status()
-            return r.json().get("flag_id")
-    except Exception as e:  # noqa: BLE001
-        log.warning("create_recovery_flag failed: %s", e)
-        return None
+async def recent_metrics(user_id, limit=20) -> list[dict]:
+    return await _get("/metrics", {"user_id": user_id, "limit": limit}) or []
+
+
+async def recent_match_results(user_id, limit=10) -> list[dict]:
+    return await _get("/match_results", {"user_id": user_id, "limit": limit}) or []
+
+
+async def recent_training(user_id, limit=10) -> list[dict]:
+    return await _get("/training_sessions", {"user_id": user_id, "limit": limit}) or []
+
+
+async def recent_recovery_logs(user_id, limit=10) -> list[dict]:
+    return await _get("/recovery_logs", {"user_id": user_id, "limit": limit}) or []
+
+
+async def athlete_profile(user_id) -> dict:
+    return await _get("/athlete_profile", {"user_id": user_id}) or {}

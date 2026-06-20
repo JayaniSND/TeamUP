@@ -14,12 +14,13 @@ up your next tournament — no custom frontend required.
 Receives a raw dump over the **Agent Chat Protocol** and performs multi-step
 orchestration:
 1. Delegates classification + filing to the **Librarian** agent.
-2. Routes injury/fitness notes to the **Recovery** agent and tournament notes
-   to the **Logistics** agent.
+2. From the classified sections, triggers the relevant specialists —
+   **Recovery**, **Performance**, **Sponsorship**, and **Logistics** (Dev 4).
 3. Correlates their replies and returns one consolidated answer in the same
    ASI:One session.
 
-Claude does the reasoning (classification + overtraining synthesis).
+Claude does the reasoning (classification + recovery / performance /
+sponsorship synthesis).
 
 ## How to use it
 Send a natural-language message such as:

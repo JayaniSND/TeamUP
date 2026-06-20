@@ -11,11 +11,12 @@ Classifies an athlete's raw journal dump and files it into the right sections.
 Over the **Agent Chat Protocol**, takes a raw dump (voice transcript / text /
 transcribed notebook page) and uses Claude to split it into discrete entries,
 each filed under one section:
-`performance · injury_log · coaching · energy_nutrition · logistics · training`.
+`training · performance · match_results · recovery · coaching · logistics ·
+sponsorship · goals · media_notes`.
 
-Each entry is written to the journal backend. When used on its own it also
-autonomously forwards injury notes to the **Recovery** agent and tournament
-notes to the **Logistics** agent.
+Each entry is written to the dashboard backend. When used on its own it also
+autonomously notifies the relevant specialist agents (Recovery, Performance,
+Sponsorship, Logistics).
 
 ## How to use it
 Send notes like:

@@ -1,22 +1,17 @@
-"""Orchestrator agent — the front desk for the whole demo loop.
+"""Orchestrator agent — the ASI:One entry point and conductor.
 
-This is the agent a user talks to through ASI:One. It performs multi-step
-planning and orchestration (a scored judging criterion):
-
+Multi-step planning + orchestration:
   1. Receive a raw dump.
   2. Delegate classification + filing to the Librarian (chat protocol).
-  3. Route the resulting injury notes to Recovery and tournament notes to
-     Logistics (Dev 4), over the chat protocol.
-  4. Correlate the workers' async replies and compose one consolidated
-     answer back to the user — all inside the same ASI:One session.
+  3. From the classified sections, trigger the relevant specialists
+     (Recovery / Performance / Sponsorship / Logistics) via SECTION_AGENTS.
+  4. Correlate their async replies and compose one consolidated answer in the
+     same ASI:One session.
 
-If the worker addresses aren't configured yet (first boot), it falls back to
-running the full loop inline using the same Claude functions, so the demo is
-never broken by a missing address.
+If no worker addresses are configured (first boot), it runs the whole loop
+inline with the same Claude functions, so the demo is never broken.
 
-Run:  python -m agents.orchestrator   (from the Backend/ directory)
-On boot it prints its address — this is the agent you register on
-Agentverse and reach through ASI:One.
+Run:  python -m agents.orchestrator   (from Backend/)
 """
 
 from __future__ import annotations
@@ -45,13 +40,12 @@ agent = Agent(
     name="orchestrator",
     seed=config.ORCHESTRATOR_SEED,
     port=config.ORCHESTRATOR_PORT,
-    mailbox=True,  # reachable through Agentverse / ASI:One
+    mailbox=True,
 )
-
 chat_proto = Protocol(spec=chat_protocol_spec)
 
 
-# ── formatting helpers ─────────────────────────────────────────────
+# ── formatting ─────────────────────────────────────────────────────
 def _format_filing(entries: list[dict]) -> str:
     if not entries:
         return "I couldn't find anything to file in that note."
@@ -63,121 +57,130 @@ def _format_filing(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _format_verdict(v: dict) -> str:
-    if not v.get("overtraining_risk"):
-        return "✅ Recovery: no overtraining pattern in your recent history."
-    parts = ", ".join(v.get("body_parts") or []) or "an area"
-    return (
-        f"⚠️ Recovery flag ({v.get('severity', 'unknown')}) — {parts}.\n"
-        f"   {v.get('rationale', '').strip()}\n"
-        f"   👉 {v.get('recommendation', '').strip()}"
-    )
+def _agent_texts(entries: list[dict]) -> dict[str, list[str]]:
+    """Map each triggered specialist agent -> the entry texts relevant to it."""
+    out: dict[str, list[str]] = {}
+    for e in entries:
+        for name in config.SECTION_AGENTS.get(e["section"], []):
+            out.setdefault(name, []).append(e["text"])
+    return out
 
 
-def _closing(verdicts: list[dict], logistics: list[dict]) -> str:
-    lines: list[str] = []
-    for v in verdicts:
-        lines.append(_format_verdict(v))
-    for e in logistics:
-        lines.append(f"📅 Logistics: handed '{e['text']}' to the calendar agent.")
-    if not lines:
-        lines.append("Done — nothing needed the recovery or logistics agents.")
-    return "\n".join(lines)
-
-
-# ── correlation state (kept in agent storage, keyed by request id) ──
-def _load(ctx: Context, req_id: str) -> dict | None:
+# ── correlation state (agent storage, keyed by request id) ─────────
+def _load(ctx: Context, req_id: str):
     return ctx.storage.get(req_id)
 
 
-def _save(ctx: Context, req_id: str, state: dict) -> None:
+def _save(ctx: Context, req_id: str, state: dict):
     ctx.storage.set(req_id, state)
 
 
-def _drop(ctx: Context, req_id: str) -> None:
+def _drop(ctx: Context, req_id: str):
     try:
         ctx.storage.remove(req_id)
-    except Exception:  # noqa: BLE001 - older storage impls
+    except Exception:  # noqa: BLE001
         ctx.storage.set(req_id, None)
 
 
-# ── inline fallback (used when worker addresses aren't configured) ──
+# ── inline fallback specialists (used when addresses aren't set) ───
+async def _inline_specialist(name: str, user_id: str, note: str) -> str:
+    if name == "recovery":
+        v = await claude.assess_recovery(
+            note,
+            await backend.recent_recovery_logs(user_id),
+            await backend.recent_training(user_id),
+            await backend.recent_metrics(user_id),
+        )
+        await backend.create_agent_output(
+            user_id, "Recovery Agent", "recovery",
+            v.get("summary", ""), v.get("severity", "info"), v.get("recommended_action", ""),
+        )
+        parts = ", ".join(v.get("body_parts") or []) or "an area"
+        return f"⚠️ Recovery (risk {v.get('risk_level')}, {parts}): {v.get('summary', '')} 👉 {v.get('recommended_action', '')}"
+    if name == "performance":
+        v = await claude.analyze_performance(
+            note,
+            await backend.recent_match_results(user_id),
+            await backend.recent_training(user_id),
+            await backend.recent_metrics(user_id),
+        )
+        await backend.create_agent_output(
+            user_id, "Performance Agent", "performance",
+            v.get("summary", ""), "info", v.get("recommended_focus", ""),
+        )
+        return f"📈 Performance ({v.get('trend')}): {v.get('summary', '')} 👉 {v.get('recommended_focus', '')}"
+    if name == "sponsorship":
+        v = await claude.suggest_sponsorship(
+            note,
+            await backend.athlete_profile(user_id),
+            await backend.recent_match_results(user_id),
+            await backend.recent_metrics(user_id),
+            await backend.recent_entries(user_id, "media_notes"),
+        )
+        await backend.create_sponsorship_opportunity(user_id, {
+            "brand_name": v.get("brand_name", ""), "category": v.get("category", ""),
+            "fit_score": v.get("fit_score", 0), "reason": v.get("reason", ""),
+            "draft_email": v.get("draft_email", ""), "status": "drafted",
+        })
+        return f"🤝 Sponsor: {v.get('brand_name')} (fit {v.get('fit_score', 0):.2f}) — draft ready for review (not sent)."
+    return ""
+
+
 async def _run_inline(ctx: Context, user: str, user_id: str, dump: str):
     entries = await claude.classify(dump)
     for e in entries:
         await backend.create_entry(user_id, e["section"], e["text"], meta={})
     await ctx.send(user, make_chat(_format_filing(entries)))
 
-    injuries = [e for e in entries if e["section"] in config.INJURY_SECTIONS]
-    logistics = [e for e in entries if e["section"] in config.LOGISTICS_SECTIONS]
-
-    verdicts: list[dict] = []
-    for e in injuries:
-        recent = await backend.recent_entries(user_id, "injury_log", limit=10)
-        metrics = await backend.recent_metrics(user_id, limit=20)
-        v = await claude.assess_overtraining(e["text"], recent, metrics)
-        await backend.create_recovery_flag(user_id, v)
-        verdicts.append(v)
-
-    await ctx.send(user, make_chat(_closing(verdicts, logistics), end_session=True))
+    summaries: list[str] = []
+    for name, texts in _agent_texts(entries).items():
+        if name == "logistics":
+            summaries.append("📅 Logistics: handed your schedule note to the calendar agent.")
+            continue
+        s = await _inline_specialist(name, user_id, " ".join(texts))
+        if s:
+            summaries.append(s)
+    await ctx.send(user, make_chat("\n".join(summaries) or "Done.", end_session=True))
 
 
 # ── chat protocol ──────────────────────────────────────────────────
 @chat_proto.on_message(ChatMessage)
 async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     await ctx.send(sender, make_ack(msg))
-
     if is_start(msg):
-        await ctx.send(
-            sender,
-            make_chat(
-                "👋 I'm BASELINE — your self-organizing training journal.\n"
-                "Brain-dump after practice or a match (voice transcript or "
-                "text) and I'll file it, watch for overtraining, and line up "
-                "your next tournament."
-            ),
-        )
+        await ctx.send(sender, make_chat(
+            "👋 I'm BASELINE — the sports analytics dashboard that builds itself "
+            "from your logs. Brain-dump after practice or a match (text or voice "
+            "transcript) and I'll file it, track your form, watch for overtraining, "
+            "line up events, and surface sponsor fits."
+        ))
         return
 
     raw = text_of(msg)
     if not raw.strip():
         return
-
     env = decode_envelope(raw, config.DEFAULT_USER_ID)
     kind = env.get("kind")
-
     if kind == "classify_result":
         await _on_classify_result(ctx, env)
-        return
-    if kind == "assess_result":
-        await _on_assess_result(ctx, env)
-        return
-
-    # Otherwise it's a fresh dump from a user.
-    await _on_new_dump(ctx, sender, env)
+    elif kind == "result":
+        await _on_result(ctx, env)
+    else:
+        await _on_new_dump(ctx, sender, env)
 
 
 async def _on_new_dump(ctx: Context, sender: str, env: dict):
-    user_id = env["user_id"]
-    dump = env["text"]
-
-    # No workers wired yet → do the whole loop ourselves so the demo works.
-    if not (config.LIBRARIAN_ADDRESS and config.RECOVERY_ADDRESS):
-        ctx.logger.info("Worker addresses not set; running inline workflow.")
+    user_id, dump = env["user_id"], env["text"]
+    if not config.LIBRARIAN_ADDRESS:
+        ctx.logger.info("No LIBRARIAN_ADDRESS; running inline workflow.")
         await _run_inline(ctx, sender, user_id, dump)
         return
-
     req_id = uuid4().hex
-    _save(
-        ctx,
-        req_id,
-        {"user": sender, "user_id": user_id, "pending": None, "verdicts": []},
-    )
+    _save(ctx, req_id, {"user": sender, "user_id": user_id, "pending": None, "summaries": []})
     await ctx.send(sender, make_chat("🧭 On it — classifying and filing your notes…"))
-    await ctx.send(
-        config.LIBRARIAN_ADDRESS,
-        make_chat(encode_envelope(user_id, dump, kind="classify", req_id=req_id)),
-    )
+    await ctx.send(config.LIBRARIAN_ADDRESS, make_chat(
+        encode_envelope(user_id, dump, kind="classify", req_id=req_id)
+    ))
 
 
 async def _on_classify_result(ctx: Context, env: dict):
@@ -185,53 +188,44 @@ async def _on_classify_result(ctx: Context, env: dict):
     state = _load(ctx, req_id) if req_id else None
     if not state:
         return
-
     entries = env.get("entries", [])
     await ctx.send(state["user"], make_chat(_format_filing(entries)))
 
-    injuries = [e for e in entries if e["section"] in config.INJURY_SECTIONS]
-    logistics = [e for e in entries if e["section"] in config.LOGISTICS_SECTIONS]
-    state["logistics"] = logistics
+    triggered = _agent_texts(entries)
+    sent = 0
+    for name, texts in triggered.items():
+        addr = config.address_for(name)
+        if not addr:
+            continue
+        if name == "logistics":
+            # Dev 4's agent; fire-and-forget (it surfaces on the dashboard).
+            await ctx.send(addr, make_chat(encode_envelope(state["user_id"], " ".join(texts))))
+            continue
+        await ctx.send(addr, make_chat(encode_envelope(
+            state["user_id"], " ".join(texts), kind="run", agent=name, req_id=req_id
+        )))
+        sent += 1
 
-    # Route tournament notes to Dev 4's Logistics agent (fire-and-forget).
-    if config.LOGISTICS_ADDRESS:
-        for e in logistics:
-            await ctx.send(
-                config.LOGISTICS_ADDRESS,
-                make_chat(encode_envelope(state["user_id"], e["text"])),
-            )
-
-    if not injuries:
-        await ctx.send(state["user"], make_chat(_closing([], logistics), end_session=True))
+    if sent == 0:
+        await ctx.send(state["user"], make_chat("Done — filed and routed.", end_session=True))
         _drop(ctx, req_id)
         return
-
-    # Fan out injury notes to Recovery and wait for the verdicts.
-    state["pending"] = len(injuries)
+    state["pending"] = sent
     _save(ctx, req_id, state)
-    for e in injuries:
-        await ctx.send(
-            config.RECOVERY_ADDRESS,
-            make_chat(
-                encode_envelope(state["user_id"], e["text"], kind="assess", req_id=req_id)
-            ),
-        )
 
 
-async def _on_assess_result(ctx: Context, env: dict):
+async def _on_result(ctx: Context, env: dict):
     req_id = env.get("req_id")
     state = _load(ctx, req_id) if req_id else None
     if not state:
         return
-
-    state["verdicts"].append(env.get("verdict", {}))
+    if env.get("summary"):
+        state["summaries"].append(env["summary"])
     state["pending"] = (state.get("pending") or 1) - 1
-
     if state["pending"] <= 0:
-        await ctx.send(
-            state["user"],
-            make_chat(_closing(state["verdicts"], state.get("logistics", [])), end_session=True),
-        )
+        await ctx.send(state["user"], make_chat(
+            "\n".join(state["summaries"]) or "Done.", end_session=True
+        ))
         _drop(ctx, req_id)
     else:
         _save(ctx, req_id, state)
@@ -239,11 +233,10 @@ async def _on_assess_result(ctx: Context, env: dict):
 
 @chat_proto.on_message(ChatAcknowledgement)
 async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
-    ctx.logger.debug("ack from %s for %s", sender, msg.acknowledged_msg_id)
+    ctx.logger.debug("ack from %s", sender)
 
 
 agent.include(chat_proto, publish_manifest=True)
-
 
 if __name__ == "__main__":
     print(f"[orchestrator] address: {agent.address}")

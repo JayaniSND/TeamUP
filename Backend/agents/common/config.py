@@ -1,8 +1,8 @@
-"""Shared configuration for the Dev 3 agent layer.
+"""Shared configuration for the agent layer.
 
-Single source of truth for the section enum, model ids, backend URL, and
-agent addresses. Everything reads from the environment (.env), so the
-three agents stay in sync without hardcoded values scattered around.
+Single source of truth for the section taxonomy, model ids, backend URL,
+agent addresses, and the section->agent routing map. Everything reads from
+the environment (.env) so the agents stay in sync without scattered values.
 """
 
 from __future__ import annotations
@@ -11,24 +11,21 @@ import os
 
 from dotenv import load_dotenv
 
-# Load Backend/.env if present. Looks in CWD and parents, so running an
-# agent from either Backend/ or the repo root both work.
+# Load Backend/.env if present (CWD or parents).
 load_dotenv()
 
-# The section taxonomy. MUST match Dev 2's `SECTIONS` constant and the
-# frontend's copy exactly — it's the contract the Librarian classifies into.
+# The section taxonomy. MUST match Dev 2's `SECTIONS` and the frontend copy.
 SECTIONS: list[str] = [
-    "performance",
-    "injury_log",
-    "coaching",
-    "energy_nutrition",
-    "logistics",
     "training",
+    "performance",
+    "match_results",
+    "recovery",
+    "coaching",
+    "logistics",
+    "sponsorship",
+    "goals",
+    "media_notes",
 ]
-
-# Sections that trigger downstream specialist agents.
-INJURY_SECTIONS = {"injury_log"}
-LOGISTICS_SECTIONS = {"logistics"}
 
 # Dev 2's FastAPI. Defaults to the bundled mock backend.
 BACKEND_URL: str = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
@@ -36,28 +33,63 @@ BACKEND_URL: str = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000").rstrip
 # Athlete to attribute entries to when a dump doesn't carry one.
 DEFAULT_USER_ID: str = os.environ.get("DEFAULT_USER_ID", "demo-athlete")
 
-# Downstream agent addresses (filled in after first boot — see README).
+# ── Agent addresses (filled in after first boot — see README) ──────
 LIBRARIAN_ADDRESS: str = os.environ.get("LIBRARIAN_ADDRESS", "").strip()
 RECOVERY_ADDRESS: str = os.environ.get("RECOVERY_ADDRESS", "").strip()
-LOGISTICS_ADDRESS: str = os.environ.get("LOGISTICS_ADDRESS", "").strip()
+PERFORMANCE_ADDRESS: str = os.environ.get("PERFORMANCE_ADDRESS", "").strip()
+SPONSORSHIP_ADDRESS: str = os.environ.get("SPONSORSHIP_ADDRESS", "").strip()
+LOGISTICS_ADDRESS: str = os.environ.get("LOGISTICS_ADDRESS", "").strip()  # Dev 4
 
-# Models. Project defaults: cheap/fast classify, stronger synthesis.
+
+def address_for(agent_name: str) -> str:
+    """Resolve a specialist agent name to its configured address ('' if unset).
+
+    Read dynamically (module attributes) so run_local.py can patch addresses
+    at runtime for in-process Bureau testing.
+    """
+    import agents.common.config as cfg  # self, for live attribute lookup
+
+    return {
+        "recovery": cfg.RECOVERY_ADDRESS,
+        "performance": cfg.PERFORMANCE_ADDRESS,
+        "sponsorship": cfg.SPONSORSHIP_ADDRESS,
+        "logistics": cfg.LOGISTICS_ADDRESS,
+    }.get(agent_name, "")
+
+
+# Which specialist agents should react when a section appears in a dump.
+# The Orchestrator triggers the union of these for the classified sections.
+SECTION_AGENTS: dict[str, list[str]] = {
+    "recovery": ["recovery"],
+    "training": ["recovery", "performance"],
+    "match_results": ["performance", "sponsorship"],
+    "performance": ["performance"],
+    "logistics": ["logistics"],
+    "sponsorship": ["sponsorship"],
+    "media_notes": ["sponsorship"],
+    "goals": [],
+    "coaching": [],
+}
+
+# ── Models ─────────────────────────────────────────────────────────
 CLASSIFY_MODEL: str = os.environ.get("CLASSIFY_MODEL", "claude-haiku-4-5")
 SYNTHESIS_MODEL: str = os.environ.get("SYNTHESIS_MODEL", "claude-sonnet-4-6")
 
-# ASI:One bonus router.
+# ── ASI:One bonus router ───────────────────────────────────────────
 ASI_ONE_API_KEY: str = os.environ.get("ASI_ONE_API_KEY", "").strip()
 
-# Fixed seeds keep each agent's address stable across restarts, so the
-# addresses you paste into .env don't change every boot.
+# ── Stable seeds + ports ───────────────────────────────────────────
 LIBRARIAN_SEED = os.environ.get("LIBRARIAN_SEED", "baseline-librarian-seed-v1")
 RECOVERY_SEED = os.environ.get("RECOVERY_SEED", "baseline-recovery-seed-v1")
+PERFORMANCE_SEED = os.environ.get("PERFORMANCE_SEED", "baseline-performance-seed-v1")
+SPONSORSHIP_SEED = os.environ.get("SPONSORSHIP_SEED", "baseline-sponsorship-seed-v1")
 ORCHESTRATOR_SEED = os.environ.get("ORCHESTRATOR_SEED", "baseline-orchestrator-seed-v1")
 
-# Ports each agent binds locally.
 LIBRARIAN_PORT = int(os.environ.get("LIBRARIAN_PORT", "8001"))
 RECOVERY_PORT = int(os.environ.get("RECOVERY_PORT", "8002"))
 ORCHESTRATOR_PORT = int(os.environ.get("ORCHESTRATOR_PORT", "8003"))
+PERFORMANCE_PORT = int(os.environ.get("PERFORMANCE_PORT", "8004"))
+SPONSORSHIP_PORT = int(os.environ.get("SPONSORSHIP_PORT", "8005"))
 
 
 def require_anthropic_key() -> str:
