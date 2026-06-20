@@ -55,7 +55,7 @@ export const SectionCard = memo(function SectionCard({
             </span>
           )}
           <div className="min-w-0">
-            <h2 className="text-[15px] font-semibold tracking-tight text-white">{title}</h2>
+            <h2 className="text-[15px] font-semibold tracking-tight text-text">{title}</h2>
             {subtitle && <p className="mt-0.5 truncate text-[11px] leading-relaxed text-text-dim">{subtitle}</p>}
           </div>
         </div>

@@ -63,7 +63,7 @@ export const AIChatPanel = memo(function AIChatPanel({
 
   return (
     <aside className="glass-card fade-up fixed bottom-3 right-3 top-3 z-40 flex w-[calc(100vw-1.5rem)] max-w-[380px] min-h-0 flex-col overflow-hidden rounded-[2rem] p-3.5 xl:relative xl:inset-auto xl:z-auto xl:h-full xl:w-full xl:max-w-none xl:p-4">
-      <header className="flex shrink-0 items-center gap-2.5 border-b border-white/22 pb-3">
+      <header className="flex shrink-0 items-center gap-2.5 border-b border-line pb-3">
         <span className="grid size-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-ai/20 to-accent/20 text-ai ring-1 ring-ai/30">
           <Bot className="size-4.5" strokeWidth={2} />
         </span>
@@ -75,7 +75,7 @@ export const AIChatPanel = memo(function AIChatPanel({
         </div>
         <button
           onClick={onClose}
-          className="ml-auto grid size-8 place-items-center rounded-xl text-text-dim transition-colors hover:bg-white/42 hover:text-text"
+          className="ml-auto grid size-8 place-items-center rounded-xl text-text-dim transition-colors hover:bg-accent/7 hover:text-text"
           aria-label="Close AI panel"
         >
           <X className="size-4" />
@@ -85,12 +85,12 @@ export const AIChatPanel = memo(function AIChatPanel({
       <div className="grid shrink-0 grid-cols-2 gap-2 py-3">
         <div className="glass-inset rounded-2xl p-3">
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-text-dim">Load</div>
-          <div className="tnum mt-1 text-2xl font-semibold text-white">290m</div>
+          <div className="tnum mt-1 text-2xl font-semibold text-text">290m</div>
           <div className="mt-1 text-[11px] text-warning">High week</div>
         </div>
         <div className="glass-inset rounded-2xl p-3">
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-text-dim">Recovery</div>
-          <div className="tnum mt-1 text-2xl font-semibold text-white">55</div>
+          <div className="tnum mt-1 text-2xl font-semibold text-text">55</div>
           <div className="mt-1 text-[11px] text-positive">Connected</div>
         </div>
       </div>
@@ -101,7 +101,7 @@ export const AIChatPanel = memo(function AIChatPanel({
             <div
               className={cn(
                 "max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed shadow-[inset_0_1px_0_rgba(255,255,255,0.58)]",
-                m.role === "user" ? "bg-white/18 text-white ring-1 ring-white/24" : "bg-white/13 text-text-muted ring-1 ring-white/18"
+                m.role === "user" ? "bg-accent/10 text-text ring-1 ring-accent/18" : "bg-white/95 text-text-muted ring-1 ring-line"
               )}
             >
               {m.text}
@@ -119,7 +119,7 @@ export const AIChatPanel = memo(function AIChatPanel({
         ))}
       </div>
 
-      <div className="shrink-0 border-t border-white/22 pt-3">
+      <div className="shrink-0 border-t border-line pt-3">
         <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-dim">
           <Sparkles className="size-3" /> Suggested
         </div>
@@ -128,7 +128,7 @@ export const AIChatPanel = memo(function AIChatPanel({
             <button
               key={p.id}
               onClick={() => send(p.text, p.id)}
-              className="glass-chip group flex items-center gap-1 rounded-xl px-2 py-1.5 text-left text-[11px] text-text-muted transition-colors hover:border-ai/30 hover:bg-ai/[0.08] hover:text-text"
+              className="glass-chip group flex items-center gap-1 rounded-xl px-2 py-1.5 text-left text-[11px] text-text-muted transition-colors hover:border-ai/30 hover:bg-accent/7 hover:text-text"
             >
               {p.text}
               <ArrowUpRight className="size-3 text-text-dim group-hover:text-ai" />
@@ -141,13 +141,13 @@ export const AIChatPanel = memo(function AIChatPanel({
             e.preventDefault();
             send(input);
           }}
-          className="glass-inset flex h-11 items-center gap-2 rounded-2xl bg-white/[0.10] p-1.5 ring-1 ring-white/20 focus-within:border-accent/40 focus-within:ring-accent/35"
+          className="glass-inset flex h-11 items-center gap-2 rounded-2xl bg-white/95 p-1.5 ring-1 ring-accent/14 focus-within:border-accent/40 focus-within:ring-accent/35"
         >
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask about your performance…"
-            className="min-w-0 flex-1 bg-transparent px-2 text-sm text-white placeholder:text-text-dim focus:outline-none"
+            className="min-w-0 flex-1 bg-transparent px-2 text-sm text-text placeholder:text-text-dim focus:outline-none"
           />
           <Button type="submit" variant="primary" size="icon">
             <Send className="size-3.5" />

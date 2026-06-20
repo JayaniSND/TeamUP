@@ -32,13 +32,13 @@ export const AgentInsightsStrip = memo(function AgentInsightsStrip({
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold text-white">Next Action</h2>
+              <h2 className="truncate text-sm font-semibold text-text">Next Action</h2>
               <p className="mt-0.5 truncate text-[10px] font-medium text-text-dim">Highest-leverage agent signal</p>
             </div>
             {featured?.action && (
               <button
                 onClick={() => onAsk(featured.action!.prompt, featured.action!.replyId)}
-                className="glass-chip shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-white/18"
+                className="glass-chip shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold text-text transition-colors hover:bg-accent/7"
               >
                 Apply
               </button>

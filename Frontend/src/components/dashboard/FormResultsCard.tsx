@@ -2,11 +2,11 @@ import { memo, useMemo } from "react";
 import { Swords } from "lucide-react";
 import type { FormMatch } from "@/types/athlete";
 
-const WIN = "#7ef5d1";
-const LOSS = "#ff9edf";
+const WIN_BAR = "linear-gradient(180deg, #38bdf8 0%, #2563eb 100%)";
+const LOSS_BAR = "linear-gradient(180deg, #a5b4fc 0%, #64748b 100%)";
 
 /**
- * The win/loss form graph: one bar per recent match, green for a win, rose for a
+ * The win/loss form graph: one bar per recent match, blue/cyan for a win, slate-blue for a
  * loss, height = how well she played. A single, instantly-readable view of form.
  */
 export const FormResultsCard = memo(function FormResultsCard({
@@ -30,13 +30,13 @@ export const FormResultsCard = memo(function FormResultsCard({
             <Swords className="size-4" strokeWidth={1.75} />
           </span>
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-white">Form</h2>
+            <h2 className="truncate text-sm font-semibold text-text">Form</h2>
             <p className="truncate text-[10px] text-text-dim">Last {recent.length} matches</p>
           </div>
         </div>
         <button
           onClick={onAction}
-          className="glass-chip shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white transition-colors hover:bg-white/18"
+          className="glass-chip shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold text-text transition-colors hover:bg-accent/7"
         >
           Explain
         </button>
@@ -65,10 +65,10 @@ export const FormResultsCard = memo(function FormResultsCard({
             <div key={match.id} className="flex min-w-0 flex-1 items-end">
               <span
                 title={`${match.result} ${match.score} vs ${match.opponent}`}
-                className="w-full rounded-t-md shadow-[0_0_12px_rgba(255,255,255,0.12)]"
+                className="w-full rounded-t-md shadow-[0_0_12px_rgba(37,99,235,0.18)]"
                 style={{
                   height: `${Math.max(28, match.value)}%`,
-                  background: match.result === "W" ? WIN : LOSS,
+                  background: match.result === "W" ? WIN_BAR : LOSS_BAR,
                 }}
               />
             </div>

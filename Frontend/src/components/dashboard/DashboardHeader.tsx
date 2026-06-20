@@ -13,14 +13,14 @@ export const DashboardHeader = memo(function DashboardHeader({
   return (
     <header className="fade-up flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
       <div className="flex min-w-0 items-center gap-3">
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/14 text-sm font-bold text-white ring-1 ring-white/20">
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/95 text-sm font-bold text-accent ring-1 ring-accent/16">
           {profile.avatarInitials}
         </span>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-text-dim">
             <span>{profile.currentWeek}</span>
           </div>
-          <h1 className="mt-0.5 truncate text-base font-semibold tracking-tight text-white">{profile.name}</h1>
+          <h1 className="mt-0.5 truncate text-base font-semibold tracking-tight text-text">{profile.name}</h1>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] font-medium text-text-muted">
             <span>{profile.sport}</span>
             <span className="text-text-dim">·</span>

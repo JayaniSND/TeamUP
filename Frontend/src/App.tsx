@@ -66,7 +66,7 @@ export default function App() {
         <Sidebar active={active} onSelect={onSelect} profile={data.profile} />
 
         <div className="min-w-0 flex-1">
-          <div className="sticky top-0 z-30 flex items-center gap-2 border-b border-white/15 bg-white/[0.08] px-4 py-2.5 backdrop-blur-xl lg:hidden">
+          <div className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-white/85 px-4 py-2.5 backdrop-blur-md lg:hidden">
             <span className="glass-chip grid size-8 shrink-0 place-items-center rounded-xl text-accent">
               <Hexagon className="size-4" strokeWidth={2} />
             </span>
@@ -77,7 +77,7 @@ export default function App() {
                   onClick={() => onSelect(id)}
                   className={cn(
                     "shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors",
-                    active === id ? "bg-white/22 text-white ring-1 ring-white/30" : "text-text-muted hover:bg-white/12"
+                    active === id ? "bg-accent/10 text-accent ring-1 ring-accent/18" : "text-text-muted hover:bg-accent/7 hover:text-text"
                   )}
                 >
                   {label}
@@ -131,7 +131,7 @@ export default function App() {
         {!chatOpen && (
           <button
             onClick={openChat}
-            className="card-hover fixed bottom-5 right-5 z-40 grid size-14 place-items-center rounded-3xl bg-ai text-white shadow-[0_18px_42px_-16px_rgba(135,92,246,0.72)]"
+            className="card-hover fixed bottom-5 right-5 z-40 grid size-14 place-items-center rounded-3xl bg-accent text-white shadow-[0_18px_42px_-16px_rgba(49,164,105,0.62)]"
             aria-label="Open AI chat"
           >
             <Bot className="size-6" strokeWidth={2} />
