@@ -1,12 +1,12 @@
-# BASELINE — Agent Layer (Dev 3)
+# BASELINE — Agent Layer
 
 The Fetch.ai-facing half of BASELINE, the **sports analytics dashboard that
 builds itself from an athlete's logs**: real **uAgents** that talk over the
 standardized **Agent Chat Protocol**, registered on **Agentverse**, reachable
 through **ASI:One**, with **Claude** doing the reasoning inside them.
 
-> Track: UC Berkeley AI Hackathon 2026 — Fetch.ai. See [`../framework.md`](../framework.md)
-> for the full product spec. This folder is the Dev 3 deliverable.
+> Track: UC Berkeley AI Hackathon 2026 — Fetch.ai. See [`framework.md`](../../framework.md)
+> for the full product spec. This folder is the agent-layer deliverable.
 
 ## What's here
 
@@ -22,9 +22,9 @@ Backend/
 │       ├── config.py       # SECTIONS, section→agent map, models, addresses
 │       ├── chat.py         # chat-protocol helpers (+ session content)
 │       ├── claude.py       # classify + recovery/performance/sponsorship reasoning
-│       └── backend_client.py  # async client for Dev 2's FastAPI
+│       └── backend_client.py  # async client for the data backend's FastAPI
 ├── readmes/                # Agentverse "Overview" READMEs (Innovation Lab badge)
-├── mock_backend.py         # Dev 2 stand-in: full schema + dashboard routes, seeded
+├── mock_backend.py         # data backend stand-in: full schema + dashboard routes, seeded
 ├── run_local.py            # one-command OFFLINE end-to-end test (Bureau)
 ├── send_dump.py            # message a deployed/mailbox agent and print replies
 ├── asi_ping.py             # optional ASI:One probe for the bonus clip
@@ -32,8 +32,8 @@ Backend/
 └── .env.example
 ```
 
-Logistics + Coaching/Chat agents are owned by Dev 4 / Dev 2 respectively (see
-`../framework.md` §6).
+Logistics + Coaching/Chat agents live elsewhere in the project (see
+[`framework.md`](../../framework.md) §6).
 
 ## Sections
 
@@ -53,7 +53,7 @@ logistics · sponsorship · goals · media_notes
                  └───┬───────┬───┬──┘
             chat ▼   │       │   ▼ chat
          ┌──────────┐│       │┌──────────────┐
-         │ Librarian││       ││  Logistics   │ (Dev 4)
+         │ Librarian││       ││  Logistics   │ (external)
          │ (Claude) ││       │└──────────────┘
          └────┬─────┘▼       ▼
               │ ┌─────────┐ ┌────────────┐ ┌──────────────┐
@@ -62,7 +62,7 @@ logistics · sponsorship · goals · media_notes
               │ └────┬────┘ └─────┬──────┘ └──────┬───────┘
               └──────┴───────┬────┴───────────────┘
                              ▼  REST
-            Dev 2 FastAPI (entries, metrics, matches, agent_outputs, …)
+            Data backend FastAPI (entries, metrics, matches, agent_outputs, …)
 ```
 
 The Orchestrator is the single agent a user talks to. It delegates
@@ -108,7 +108,7 @@ python -m agents.orchestrator    # prints ORCHESTRATOR address
 
 1. Paste each printed address into `.env` (`LIBRARIAN_ADDRESS`,
    `RECOVERY_ADDRESS`, `PERFORMANCE_ADDRESS`, `SPONSORSHIP_ADDRESS`, and
-   `LOGISTICS_ADDRESS` once Dev 4 shares it), then restart the Orchestrator.
+   `LOGISTICS_ADDRESS` once the logistics agent address is available), then restart the Orchestrator.
    Seeds are fixed, so addresses are stable across restarts.
 2. Connect each agent's mailbox to Agentverse and paste the matching file from
    `readmes/` into its **Overview** tab (the Innovation Lab badge is already at
@@ -144,12 +144,12 @@ All use structured outputs, so the JSON is schema-valid — no fragile parsing.
 
 ## Integrating with the team
 
-- **Dev 2 (data/RAG):** agents call `POST /entries`, `GET /entries`,
+- **Data backend (data/RAG):** agents call `POST /entries`, `GET /entries`,
   `GET /metrics`, `GET /match_results`, `GET /training_sessions`,
   `GET /recovery_logs`, `GET /athlete_profile`, `POST /agent_outputs`,
   `POST /sponsorship_opportunities`. Point `BACKEND_URL` at the real service when
   up; the contract matches `mock_backend.py`.
-- **Dev 4 (Logistics/Scout):** share your Logistics agent address →
+- **Logistics/Scout:** share the Logistics agent address →
   `LOGISTICS_ADDRESS`. The Orchestrator/Librarian forward schedule/tournament
   notes to it over the chat protocol.
 

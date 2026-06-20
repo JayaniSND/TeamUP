@@ -15,7 +15,7 @@ Receives a raw dump over the **Agent Chat Protocol** and performs multi-step
 orchestration:
 1. Delegates classification + filing to the **Librarian** agent.
 2. From the classified sections, triggers the relevant specialists —
-   **Recovery**, **Performance**, **Sponsorship**, and **Logistics** (Dev 4).
+   **Recovery**, **Performance**, **Sponsorship**, and **Logistics**.
 3. Correlates their replies and returns one consolidated answer in the same
    ASI:One session.
 
