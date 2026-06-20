@@ -87,7 +87,7 @@ async def _inline_specialist(name: str, user_id: str, note: str) -> str:
     if name == "recovery":
         v = await claude.assess_recovery(
             note,
-            await backend.recent_entries(user_id, limit=40),
+            await backend.recent_entries(user_id, limit=60),
             await backend.recent_recovery_logs(user_id),
             await backend.recent_training(user_id),
             await backend.recent_metrics(user_id),
@@ -97,7 +97,12 @@ async def _inline_specialist(name: str, user_id: str, note: str) -> str:
             v.get("summary", ""), v.get("severity", "info"), v.get("recommended_action", ""),
         )
         parts = ", ".join(v.get("body_parts") or []) or "an area"
-        return f"⚠️ Recovery (risk {v.get('risk_level')}, {parts}): {v.get('summary', '')} 👉 {v.get('recommended_action', '')}"
+        out = f"⚠️ Recovery (risk {v.get('risk_level')}, {parts}): {v.get('summary', '')} 👉 {v.get('recommended_action', '')}"
+        if v.get("pattern_type", "none") not in ("none", ""):
+            out += f"\n🔎 Pattern — {v['pattern_type'].replace('_', ' ')}: {v.get('pattern_summary', '')}"
+            if v.get("chain_message"):
+                out += f"\n   ➡️ {v['chain_message']}"
+        return out
     if name == "performance":
         v = await claude.analyze_performance(
             note,

@@ -3,6 +3,8 @@ uagents>=0.22.0
 anthropic>=0.40.0
 httpx>=0.27.0
 python-dotenv>=1.0.1
+deepgram-sdk>=3.7.0
+sounddevice>=0.5.0
 
 # ASI:One bonus router (OpenAI-compatible client)
 openai>=1.40.0

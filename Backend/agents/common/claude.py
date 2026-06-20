@@ -136,18 +136,29 @@ async def classify(dump: str) -> list[dict]:
 # "muscling through", a body side described with rising negativity, load
 # spikes with no rest language), even before the athlete mentions pain.
 _RECOVERY_SYSTEM = (
-    "You are the Recovery agent for an individual athlete, reading like a sports "
-    "physiologist. You are given the athlete's recent journal entries across ALL "
-    "sections (roughly the last 14 days), plus structured recovery logs, training, "
-    "and metrics. Look for an overtraining or injury-risk pattern, including subtle "
-    "LINGUISTIC DRIFT — not just explicit injury keywords. Flag things like: the "
-    "same skill described with falling energy over time (e.g. 'explosive' → "
-    "'muscling through'), a body part referenced with increasing negativity, or a "
-    "training-load spike with no rest/recovery language — even if the athlete has "
-    "not used the word 'pain'. Also flag the classic signals: same body part sore "
-    "3+ sessions, volume spike, or a declining recovery score with complaints. Be "
-    "conservative and quote what you actually saw. This is wellness and self-"
-    "management guidance, NOT medical diagnosis."
+    "You are the Recovery & Pattern agent for an individual athlete, reading like "
+    "a sports physiologist AND a performance psychologist. You are given the "
+    "athlete's recent journal entries across ALL sections (up to ~60 days), plus "
+    "structured recovery logs, training, and metrics. Produce TWO findings:\n\n"
+    "1) PHYSICAL (shorter ~14-day horizon): an overtraining/injury-risk read, "
+    "including subtle LINGUISTIC DRIFT — not just injury keywords. Flag e.g. the "
+    "same skill described with falling energy over time ('explosive' → 'muscling "
+    "through'), a body part referenced with rising negativity, or a load spike "
+    "with no rest language — even before the word 'pain' appears. Also the classic "
+    "signals: same body part sore 3+ sessions, volume spike, declining recovery "
+    "score with complaints.\n\n"
+    "2) BEHAVIORAL/EMOTIONAL ARC (longer 30-60 day horizon): patterns that only "
+    "show across timestamps, not in one entry. Classify pattern_type as one of: "
+    "confidence_rising (language/wins/mood trending up), burnout_arc ('why am I "
+    "even playing' followed later by strong entries), momentum_dip (3+ losses, "
+    "falling energy, shorter sessions), readiness_window (low fatigue + positive "
+    "mood + strong training in one window), plateau (metrics flat 4+ weeks despite "
+    "training), or none. When a positive arc is detected (confidence_rising or "
+    "readiness_window), set chain_to='logistics' with a chain_message inviting the "
+    "athlete to enter an upcoming tournament. For momentum_dip use chain_to="
+    "'performance'; for plateau use chain_to='coaching'; otherwise chain_to='none'.\n\n"
+    "Be conservative, quote what you actually saw, and only chain on a real arc. "
+    "This is wellness and self-management guidance, NOT medical diagnosis."
 )
 
 _RECOVERY_SCHEMA = {
@@ -158,8 +169,24 @@ _RECOVERY_SCHEMA = {
         "body_parts": {"type": "array", "items": {"type": "string"}},
         "summary": {"type": "string"},
         "recommended_action": {"type": "string"},
+        "pattern_type": {
+            "type": "string",
+            "enum": [
+                "none", "confidence_rising", "burnout_arc",
+                "momentum_dip", "readiness_window", "plateau",
+            ],
+        },
+        "pattern_summary": {"type": "string"},
+        "chain_to": {
+            "type": "string",
+            "enum": ["none", "logistics", "performance", "coaching"],
+        },
+        "chain_message": {"type": "string"},
     },
-    "required": ["risk_level", "severity", "body_parts", "summary", "recommended_action"],
+    "required": [
+        "risk_level", "severity", "body_parts", "summary", "recommended_action",
+        "pattern_type", "pattern_summary", "chain_to", "chain_message",
+    ],
     "additionalProperties": False,
 }
 

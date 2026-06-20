@@ -15,6 +15,8 @@ Run (from Backend/):
 
 from __future__ import annotations
 
+import os
+
 from uagents import Agent, Bureau, Context, Protocol
 from uagents_core.contrib.protocols.chat import (
     ChatAcknowledgement,
@@ -71,7 +73,7 @@ if __name__ == "__main__":
     print("Recovery:    ", recovery.agent.address)
     print("Performance: ", performance.agent.address)
     print("Sponsorship: ", sponsorship.agent.address)
-    bureau = Bureau()
+    bureau = Bureau(port=int(os.environ.get("BUREAU_PORT", "8000")))
     bureau.add(orchestrator.agent)
     bureau.add(librarian.agent)
     bureau.add(recovery.agent)

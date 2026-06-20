@@ -34,11 +34,19 @@ BACKEND_URL: str = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000").rstrip
 DEFAULT_USER_ID: str = os.environ.get("DEFAULT_USER_ID", "demo-athlete")
 
 # ── Agent addresses (filled in after first boot — see README) ──────
-LIBRARIAN_ADDRESS: str = os.environ.get("LIBRARIAN_ADDRESS", "").strip()
-RECOVERY_ADDRESS: str = os.environ.get("RECOVERY_ADDRESS", "").strip()
-PERFORMANCE_ADDRESS: str = os.environ.get("PERFORMANCE_ADDRESS", "").strip()
-SPONSORSHIP_ADDRESS: str = os.environ.get("SPONSORSHIP_ADDRESS", "").strip()
-LOGISTICS_ADDRESS: str = os.environ.get("LOGISTICS_ADDRESS", "").strip()  # external logistics agent
+def _env_addr(name: str) -> str:
+    """Read an agent address from env, tolerating inline `#` comments and
+    whitespace (common in hand-edited .env files). A uAgents address starts
+    with 'agent1'; anything else (a stray comment, blank) resolves to ''."""
+    val = os.environ.get(name, "").split("#", 1)[0].strip()
+    return val if val.startswith("agent1") else ""
+
+
+LIBRARIAN_ADDRESS: str = _env_addr("LIBRARIAN_ADDRESS")
+RECOVERY_ADDRESS: str = _env_addr("RECOVERY_ADDRESS")
+PERFORMANCE_ADDRESS: str = _env_addr("PERFORMANCE_ADDRESS")
+SPONSORSHIP_ADDRESS: str = _env_addr("SPONSORSHIP_ADDRESS")
+LOGISTICS_ADDRESS: str = _env_addr("LOGISTICS_ADDRESS")  # external logistics agent
 
 
 def address_for(agent_name: str) -> str:

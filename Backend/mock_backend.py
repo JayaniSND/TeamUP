@@ -148,6 +148,21 @@ def _seed():
             "entry_id": next(_ids), "user_id": "demo-athlete",
             "section": section, "text": text, "ts": _ts(days), "meta": {},
         })
+    # Behavioral/emotional arc over ~45 days: burnout → recovery → readiness.
+    # Gives the Recovery pattern agent a real arc to detect and chain on.
+    for section, text, days in [
+        ("goals", "Honestly thinking about quitting. Losing so much, I don't know why I'm even playing.", 45),
+        ("coaching", "Dragged myself to practice, heart's just not in it right now.", 38),
+        ("coaching", "Coach said simplify and have fun. Tried to just enjoy hitting today.", 30),
+        ("performance", "Starting to feel a bit more like myself on court.", 20),
+        ("performance", "Best session in weeks — movement felt sharp and free.", 12),
+        ("media_notes", "Confidence is back, serves were snapping, won a practice set easily.", 6),
+        ("goals", "Feeling really good and motivated — I want to compete again.", 3),
+    ]:
+        DB["entries"].append({
+            "entry_id": next(_ids), "user_id": "demo-athlete",
+            "section": section, "text": text, "ts": _ts(days), "meta": {},
+        })
     for days, opp, result, score in [
         (12, "A. Rivera", "win", "6-3, 6-4"),
         (8, "K. Tanaka", "loss", "4-6, 3-6"),
