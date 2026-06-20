@@ -12,6 +12,8 @@ Run:  python -m agents.recovery   (from Backend/)
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from uagents import Agent, Context, Protocol
 from uagents_core.contrib.protocols.chat import (
     ChatAcknowledgement,
@@ -50,19 +52,41 @@ def _format(v: dict) -> str:
     )
 
 
+async def _recently_flagged(user_id: str, hours: int = 72) -> bool:
+    """Agent-memory stand-in: was a recovery flag written in the last `hours`?
+
+    Mirrors framework v4's Redis Agent Memory dedup using the backend's
+    agent_outputs feed, so the passive sweep doesn't spam duplicate alerts.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    for o in await backend.recent_agent_outputs(user_id, section="recovery", limit=5):
+        if o.get("severity", "none") in ("none", "info"):
+            continue
+        try:
+            if datetime.fromisoformat(o["ts"]) > cutoff:
+                return True
+        except (KeyError, ValueError):
+            continue
+    return False
+
+
 async def _assess(user_id: str, note: str) -> dict:
-    logs = await backend.recent_recovery_logs(user_id, limit=10)
-    training = await backend.recent_training(user_id, limit=10)
+    # 14-day window across ALL sections for linguistic-drift detection.
+    recent = await backend.recent_entries(user_id, limit=40)
+    logs = await backend.recent_recovery_logs(user_id, limit=14)
+    training = await backend.recent_training(user_id, limit=14)
     metrics = await backend.recent_metrics(user_id, limit=20)
-    verdict = await claude.assess_recovery(note, logs, training, metrics)
-    await backend.create_agent_output(
-        user_id,
-        agent_name="Recovery Agent",
-        section="recovery",
-        summary=verdict.get("summary", ""),
-        severity=verdict.get("severity", "info"),
-        recommended_action=verdict.get("recommended_action", ""),
-    )
+    verdict = await claude.assess_recovery(note, recent, logs, training, metrics)
+    # Only surface a dashboard insight for a genuine flag.
+    if verdict.get("risk_level", "none") not in ("none", "low"):
+        await backend.create_agent_output(
+            user_id,
+            agent_name="Recovery Agent",
+            section="recovery",
+            summary=verdict.get("summary", ""),
+            severity=verdict.get("severity", "info"),
+            recommended_action=verdict.get("recommended_action", ""),
+        )
     return verdict
 
 
@@ -80,13 +104,21 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     if not raw.strip():
         return
     env = decode_envelope(raw, config.DEFAULT_USER_ID)
-    verdict = await _assess(env["user_id"], env["text"])
-    summary = _format(verdict)
-    ctx.logger.info("Recovery risk=%s for %s", verdict.get("risk_level"), env["user_id"])
+    user_id = env["user_id"]
+    passive = env.get("kind") == "run"  # orchestrator-triggered background sweep
 
-    if env.get("kind") == "run" and env.get("req_id"):
+    # Passive sweep: skip if we already flagged this athlete in the last 72h.
+    if passive and await _recently_flagged(user_id):
+        summary = "✅ Recovery: already flagged within 72h — skipping a duplicate alert."
+        ctx.logger.info("Recovery dedup-skip for %s", user_id)
+    else:
+        verdict = await _assess(user_id, env["text"])
+        summary = _format(verdict)
+        ctx.logger.info("Recovery risk=%s for %s", verdict.get("risk_level"), user_id)
+
+    if passive and env.get("req_id"):
         await ctx.send(sender, make_chat(encode_envelope(
-            env["user_id"], env["text"],
+            user_id, env["text"],
             kind="result", agent="recovery", req_id=env["req_id"], summary=summary,
         )))
     else:

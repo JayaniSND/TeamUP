@@ -14,6 +14,8 @@ env/
 # uAgents local state
 *.db
 agent_storage/
+*_data.json
+agent1*_data.json
 
 # OS / editor
 .DS_Store
