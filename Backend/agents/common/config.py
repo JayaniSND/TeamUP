@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # Load Backend/.env if present (CWD or parents).
 load_dotenv()
 
-# The section taxonomy. MUST match Dev 2's `SECTIONS` and the frontend copy.
+# The section taxonomy. MUST match the data backend's `SECTIONS` and the frontend copy.
 SECTIONS: list[str] = [
     "training",
     "performance",
@@ -27,7 +27,7 @@ SECTIONS: list[str] = [
     "media_notes",
 ]
 
-# Dev 2's FastAPI. Defaults to the bundled mock backend.
+# The data backend's FastAPI. Defaults to the bundled mock backend.
 BACKEND_URL: str = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 
 # Athlete to attribute entries to when a dump doesn't carry one.
@@ -38,7 +38,7 @@ LIBRARIAN_ADDRESS: str = os.environ.get("LIBRARIAN_ADDRESS", "").strip()
 RECOVERY_ADDRESS: str = os.environ.get("RECOVERY_ADDRESS", "").strip()
 PERFORMANCE_ADDRESS: str = os.environ.get("PERFORMANCE_ADDRESS", "").strip()
 SPONSORSHIP_ADDRESS: str = os.environ.get("SPONSORSHIP_ADDRESS", "").strip()
-LOGISTICS_ADDRESS: str = os.environ.get("LOGISTICS_ADDRESS", "").strip()  # Dev 4
+LOGISTICS_ADDRESS: str = os.environ.get("LOGISTICS_ADDRESS", "").strip()  # external logistics agent
 
 
 def address_for(agent_name: str) -> str:

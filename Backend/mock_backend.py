@@ -1,10 +1,10 @@
-"""Local stand-in for Dev 2's FastAPI, so the agent chain runs solo.
+"""Local stand-in for the data backend's FastAPI, so the agent chain runs solo.
 
 Implements the endpoints the agents call plus a few dashboard routes, with an
 in-memory store seeded with believable athlete history (a knee-soreness pattern
 Recovery can detect, a win/loss record Performance can read, a profile for
-Sponsorship). This is a developer convenience — point BACKEND_URL at Dev 2's
-real service when it's up.
+Sponsorship). This is a developer convenience — point BACKEND_URL at the
+real data backend when it's up.
 
 Run:  uvicorn mock_backend:app --reload   (from Backend/)
 """
@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-app = FastAPI(title="BASELINE mock backend (Dev 2 stand-in)")
+app = FastAPI(title="BASELINE mock backend (data backend stand-in)")
 
 _ids = itertools.count(1)
 DB: dict[str, list[dict]] = {

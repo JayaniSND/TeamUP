@@ -1,8 +1,8 @@
-"""Thin async client for Dev 2's FastAPI (the data spine).
+"""Thin async client for the data backend's FastAPI (the data spine).
 
 Every call degrades gracefully: if the backend is down it logs and returns an
 empty list / None rather than crashing the agent. Point BACKEND_URL at the
-bundled mock backend to run the whole chain before Dev 2's service exists.
+bundled mock backend to run the whole chain before the real backend exists.
 """
 
 from __future__ import annotations

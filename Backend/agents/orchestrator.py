@@ -198,7 +198,7 @@ async def _on_classify_result(ctx: Context, env: dict):
         if not addr:
             continue
         if name == "logistics":
-            # Dev 4's agent; fire-and-forget (it surfaces on the dashboard).
+            # external logistics agent; fire-and-forget (it surfaces on the dashboard).
             await ctx.send(addr, make_chat(encode_envelope(state["user_id"], " ".join(texts))))
             continue
         await ctx.send(addr, make_chat(encode_envelope(
