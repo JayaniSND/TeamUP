@@ -172,8 +172,18 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
         await _on_classify_result(ctx, env)
     elif kind == "result":
         await _on_result(ctx, env)
+    elif sender in _specialist_addresses():
+        # A plain (non-envelope) reply from a specialist we forwarded to (e.g. the
+        # interactive Logistics agent). Don't reclassify it as a new user message.
+        ctx.logger.debug("Ignoring stray reply from specialist %s", sender)
     else:
         await _on_user_message(ctx, sender, env)
+
+
+def _specialist_addresses() -> set[str]:
+    names = ("librarian", "recovery", "performance", "sponsorship", "logistics", "scout")
+    addrs = {config.address_for(n) for n in names} | {config.LIBRARIAN_ADDRESS}
+    return {a for a in addrs if a}
 
 
 async def _on_user_message(ctx: Context, sender: str, env: dict):
@@ -216,7 +226,18 @@ async def _handle_action(ctx: Context, user: str, user_id: str, message: str, ag
                 f"The {agent} agent isn't connected yet.", end_session=True
             ))
         return
-    # run the owning specialist and relay its one result
+    # Logistics is interactive (it runs its own multi-step flights/hotels/
+    # tournament-pick conversation), so kick it off and point the athlete to it
+    # rather than waiting for a single one-shot result.
+    if agent == "logistics":
+        await ctx.send(addr, make_chat(encode_envelope(user_id, message)))
+        await ctx.send(user, make_chat(
+            "🧳 I've handed that to the Logistics agent — it'll walk you through "
+            "tournaments, flights, and hotels. Chat it directly to pick options.",
+            end_session=True,
+        ))
+        return
+    # one-shot worker (recovery / performance / sponsorship / scout): relay result
     req_id = uuid4().hex
     _save(ctx, req_id, {"user": user, "user_id": user_id, "pending": 1, "summaries": []})
     await ctx.send(addr, make_chat(

@@ -9,17 +9,19 @@ sounddevice>=0.5.0
 # ASI:One bonus router (OpenAI-compatible client)
 openai>=1.40.0
 
-# Logistics/Scout tournament + opponent scraping (optional — agents fall
-# back to cached results if absent). playwright drives the Browserbase
-# cloud browser over CDP; run `playwright install chromium` once if used.
+# Logistics/Scout — tournament + opponent scraping (optional; agents fall back
+# to cached results if absent). Run `playwright install chromium` once if used.
 browserbase>=1.0.0
 playwright>=1.40.0
+stagehand-python>=0.1.0
 
-# Logistics → Google Calendar insert (optional — events still persist to the
-# backend without these)
-google-api-python-client>=2.100.0
+# Logistics -> Google Calendar (optional; events still persist to the backend)
+google-api-python-client>=2.130.0
 google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
 
-# Local mock backend, so the agent chain is runnable without the real backend
+# Data backend (Supabase) + local mock backend
+supabase>=2.0.0
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0

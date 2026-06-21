@@ -74,7 +74,9 @@ SECTION_AGENTS: dict[str, list[str]] = {
     "training": ["recovery", "performance"],
     "match_results": ["performance", "sponsorship", "scout"],
     "performance": ["performance"],
-    "logistics": ["logistics"],
+    # Logistics is an interactive agent (flights/hotels/tournament pick), not a
+    # one-shot fan-in worker — it's invoked on an explicit request, not every dump.
+    "logistics": [],
     "sponsorship": ["sponsorship"],
     "media_notes": ["sponsorship"],
     "goals": [],

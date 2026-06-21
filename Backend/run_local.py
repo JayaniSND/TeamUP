@@ -25,7 +25,7 @@ from uagents_core.contrib.protocols.chat import (
 )
 
 from agents import (
-    librarian, logistics, orchestrator, performance, recovery, scout, sponsorship,
+    librarian, orchestrator, performance, recovery, scout, sponsorship,
 )
 from agents.common import config
 from agents.common.chat import make_ack, make_chat, text_of
@@ -35,8 +35,17 @@ config.LIBRARIAN_ADDRESS = librarian.agent.address
 config.RECOVERY_ADDRESS = recovery.agent.address
 config.PERFORMANCE_ADDRESS = performance.agent.address
 config.SPONSORSHIP_ADDRESS = sponsorship.agent.address
-config.LOGISTICS_ADDRESS = logistics.agent.address
 config.SCOUT_ADDRESS = scout.agent.address
+
+# Logistics is the teammate's interactive agent and pulls heavier deps
+# (stagehand, google libs). Import it best-effort so the offline loop still
+# runs without those installed — it just won't be in the local bureau.
+try:
+    from agents import logistics
+    config.LOGISTICS_ADDRESS = logistics.agent.address
+except Exception as e:  # noqa: BLE001
+    logistics = None
+    print(f"[run_local] Logistics agent not loaded ({e}); continuing without it.")
 
 DUMP = (
     "Worked on my serve today, felt sharp and the toss was consistent. "
@@ -77,15 +86,17 @@ if __name__ == "__main__":
     print("Recovery:    ", recovery.agent.address)
     print("Performance: ", performance.agent.address)
     print("Sponsorship: ", sponsorship.agent.address)
-    print("Logistics:   ", logistics.agent.address)
     print("Scout:       ", scout.agent.address)
+    if logistics is not None:
+        print("Logistics:   ", logistics.agent.address)
     bureau = Bureau(port=int(os.environ.get("BUREAU_PORT", "8000")))
     bureau.add(orchestrator.agent)
     bureau.add(librarian.agent)
     bureau.add(recovery.agent)
     bureau.add(performance.agent)
     bureau.add(sponsorship.agent)
-    bureau.add(logistics.agent)
     bureau.add(scout.agent)
+    if logistics is not None:
+        bureau.add(logistics.agent)
     bureau.add(user)
     bureau.run()
