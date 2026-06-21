@@ -13,16 +13,27 @@ from __future__ import annotations
 
 import itertools
 import json
+import mimetypes
 import os
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 load_dotenv()  # so the /chat RAG stub can read ANTHROPIC_API_KEY
 
 app = FastAPI(title="BASELINE mock backend (data backend stand-in)")
+
+# The Upload page (Vite dev server) calls these endpoints from the browser, so
+# allow cross-origin requests. This is a local dev backend — keep it permissive.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _ids = itertools.count(1)
 DB: dict[str, list[dict]] = {
@@ -321,6 +332,101 @@ def ingest(body: IngestIn):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ── upload conversion endpoints (NO DB writes — frontend Upload page) ───
+# These intentionally do NOT persist anything. They take a file from the
+# browser, run it through the existing processing modules, and return the
+# converted/extracted text as JSON: {"text": "..."}. Wiring entries into the
+# store happens elsewhere (/ingest) and is out of scope for the Upload flow.
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic", ".heif", ".tif", ".tiff"}
+TEXT_NOTE_EXTS = {".txt", ".md", ".markdown", ".text"}
+AUDIO_EXTS = {".webm", ".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".oga", ".opus", ".flac", ".aac", ".aiff", ".aif"}
+
+
+@app.post("/convert/photo")
+async def convert_photo(file: UploadFile = File(...)):
+    """Image/note file → extracted text via phototext.py (Claude vision OCR).
+
+    Plain-text note files are decoded directly (no OCR needed); images are sent
+    to Claude vision. Returns {"text": ...}. No database write.
+    """
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="No file uploaded, or the file is empty.")
+
+    name = (file.filename or "").lower()
+    ext = os.path.splitext(name)[1]
+    ctype = (file.content_type or "").lower()
+
+    # A typed/pasted "note file" (.txt/.md) — just read it, nothing to OCR.
+    if ctype.startswith("text/") or ext in TEXT_NOTE_EXTS:
+        return {"text": data.decode("utf-8", errors="replace").strip()}
+
+    if not (ctype.startswith("image/") or ext in IMAGE_EXTS):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file type for photo/note upload: "
+                f"{file.content_type or ext or 'unknown'}. "
+                "Upload an image (PNG, JPG, …) or a .txt/.md note."
+            ),
+        )
+
+    media_type = ctype if ctype.startswith("image/") else (mimetypes.guess_type(name)[0] or "image/jpeg")
+
+    from agents.processing.phototext import extract_text_from_image_bytes
+
+    try:
+        text = extract_text_from_image_bytes(data, media_type)
+    except ValueError as e:  # empty / bad payload
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:  # missing key / upstream failure
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — surface, don't swallow
+        raise HTTPException(status_code=500, detail=f"Image conversion failed: {e}")
+
+    return {"text": text}
+
+
+@app.post("/convert/voice")
+async def convert_voice(file: UploadFile = File(...)):
+    """Audio file/recording → transcript via voicetotext.py (Deepgram).
+
+    Accepts a recorded or uploaded audio blob, transcribes the whole file with
+    Deepgram's pre-recorded API, and returns {"text": ...}. No database write.
+    """
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="No audio uploaded, or the file is empty.")
+
+    name = (file.filename or "").lower()
+    ext = os.path.splitext(name)[1]
+    ctype = (file.content_type or "").lower()
+
+    # MediaRecorder yields audio/webm (sometimes video/webm for audio-only).
+    if not (ctype.startswith("audio/") or ctype.startswith("video/") or ext in AUDIO_EXTS):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported audio type: {file.content_type or ext or 'unknown'}. "
+                "Record audio or upload webm / wav / mp3 / m4a / ogg / flac."
+            ),
+        )
+
+    from agents.processing.voicetotext import transcribe_audio_bytes
+
+    try:
+        text = transcribe_audio_bytes(data, ctype or None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:  # missing key / Deepgram failure
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Voice conversion failed: {e}")
+
+    return {"text": text}
 
 
 @app.post("/entries")

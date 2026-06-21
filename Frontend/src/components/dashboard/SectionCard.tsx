@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from "react";
+import { memo, type KeyboardEvent, type ReactNode } from "react";
 import { type LucideIcon, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -19,6 +19,8 @@ export const SectionCard = memo(function SectionCard({
   onAction,
   secondaryAction,
   onSecondary,
+  onCardClick,
+  cardAriaLabel,
   className,
   children,
   delay = 0,
@@ -34,16 +36,34 @@ export const SectionCard = memo(function SectionCard({
   /** optional secondary (non-AI) action, e.g. "Summarize 7 days" */
   secondaryAction?: string;
   onSecondary?: () => void;
+  /** optional whole-card navigation/action; nested header buttons are isolated */
+  onCardClick?: () => void;
+  cardAriaLabel?: string;
   className?: string;
   children: ReactNode;
   delay?: number;
 }) {
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (!onCardClick) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onCardClick();
+    }
+  };
+
   return (
     <section
       id={id}
+      role={onCardClick ? "link" : undefined}
+      tabIndex={onCardClick ? 0 : undefined}
+      aria-label={onCardClick ? cardAriaLabel : undefined}
+      onClick={onCardClick}
+      onKeyDown={handleKeyDown}
       style={delay ? { animationDelay: `${delay}s` } : undefined}
       className={cn(
         "glass-card fade-up flex min-h-0 scroll-mt-24 flex-col overflow-hidden rounded-[1.45rem] p-3.5 sm:p-4 lg:scroll-mt-8",
+        onCardClick &&
+          "cursor-pointer transition-[background-color,border-color,box-shadow] duration-200 hover:border-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35",
         className
       )}
     >
@@ -60,7 +80,11 @@ export const SectionCard = memo(function SectionCard({
           </div>
         </div>
         {(action || secondaryAction) && (
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+          <div
+            className="flex shrink-0 flex-wrap items-center justify-end gap-1.5"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
             {secondaryAction && (
               <Button variant="ghost" size="sm" onClick={onSecondary}>
                 {secondaryAction}

@@ -1,15 +1,35 @@
 import { memo } from "react";
-import { LayoutDashboard, CalendarDays, TrendingUp, HeartPulse, Bot, Hexagon, Settings } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
+import {
+  LayoutDashboard,
+  CalendarDays,
+  TrendingUp,
+  HeartPulse,
+  Bot,
+  Hexagon,
+  Settings,
+  UploadCloud,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AthleteProfile } from "@/types/athlete";
 
-const NAV = [
+type NavItem = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  /** present => this item navigates to its own route; absent => dashboard section */
+  to?: string;
+};
+
+const NAV: NavItem[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "calendar", label: "Calendar", icon: CalendarDays },
+  { id: "calendar", label: "Calendar", icon: CalendarDays, to: "/calendar" },
   { id: "performance", label: "Trend", icon: TrendingUp },
   { id: "recovery", label: "Recovery", icon: HeartPulse },
+  { id: "upload", label: "Upload", icon: UploadCloud, to: "/upload" },
   { id: "ai", label: "AI Chat", icon: Bot },
-] as const;
+];
 
 /**
  * Premium dark-green rail (#1F6F5F). Text/icons are light (#EEEEEE family);
@@ -25,6 +45,21 @@ export const Sidebar = memo(function Sidebar({
   onSelect: (id: string) => void;
   profile: AthleteProfile;
 }) {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const onDashboard = pathname === "/";
+
+  // Route items navigate; section items scroll the dashboard (jumping back to it
+  // first when we're on another page).
+  const handleClick = (item: NavItem) => {
+    if (item.to) {
+      navigate(item.to);
+      return;
+    }
+    if (onDashboard) onSelect(item.id);
+    else navigate("/", { state: { scrollTo: item.id } });
+  };
+
   return (
     <aside className="sticky top-0 hidden h-[calc(100vh-2rem)] w-[76px] shrink-0 bg-sidebar p-3 text-[#EEEEEE] lg:flex xl:w-[200px]">
       <div className="flex h-full w-full flex-col">
@@ -40,11 +75,11 @@ export const Sidebar = memo(function Sidebar({
 
         <nav className="flex flex-1 flex-col gap-1.5">
           {NAV.map((item) => {
-            const isActive = active === item.id;
+            const isActive = item.to ? pathname === item.to : onDashboard && active === item.id;
             return (
               <button
                 key={item.id}
-                onClick={() => onSelect(item.id)}
+                onClick={() => handleClick(item)}
                 aria-current={isActive ? "page" : undefined}
                 title={item.label}
                 className={cn(
