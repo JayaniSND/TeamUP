@@ -9,6 +9,12 @@ sounddevice>=0.5.0
 # ASI:One bonus router (OpenAI-compatible client)
 openai>=1.40.0
 
+# Logistics agent — Browserbase/Stagehand + Google Calendar
+stagehand-python>=0.1.0
+google-api-python-client>=2.130.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+
 # Local mock backend, so the agent chain is runnable without Dev 2
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
