@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 import anthropic
 
 from . import config
+
+log = logging.getLogger("claude")
 
 _client: anthropic.Anthropic | None = None
 
@@ -31,15 +34,37 @@ def _get_client() -> anthropic.Anthropic:
 
 
 def _structured(model: str, system: str, user: str, schema: dict, max_tokens: int) -> dict:
-    resp = _get_client().messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=system,
-        output_config={"format": {"type": "json_schema", "schema": schema}},
-        messages=[{"role": "user", "content": user}],
-    )
-    text = next((b.text for b in resp.content if b.type == "text"), "{}")
-    return json.loads(text)
+    """Call Claude with a JSON-schema structured output and parse it.
+
+    Resilient to truncation: if the response hits `max_tokens` mid-JSON (which
+    raises JSONDecodeError), retry once with more room before giving up. A bad
+    parse returns {} so the calling agent degrades gracefully instead of
+    crashing the whole loop.
+    """
+    def _call(mt: int) -> str:
+        resp = _get_client().messages.create(
+            model=model,
+            max_tokens=mt,
+            system=system,
+            output_config={"format": {"type": "json_schema", "schema": schema}},
+            messages=[{"role": "user", "content": user}],
+        )
+        return next((b.text for b in resp.content if b.type == "text"), "{}")
+
+    text = _call(max_tokens)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        retry_tokens = min(max_tokens * 2, 8192)
+        log.warning(
+            "structured output not valid JSON at %d tokens (likely truncated); "
+            "retrying with %d", max_tokens, retry_tokens,
+        )
+        try:
+            return json.loads(_call(retry_tokens))
+        except json.JSONDecodeError as e:
+            log.error("structured output still invalid after retry: %s", e)
+            return {}
 
 
 # ── Gateway intent router (ASI:One front door) ─────────────────────
@@ -463,7 +488,7 @@ def _suggest_fitness_plan_sync(note, training, recovery_logs, entries, recovery_
         "Adjust the athlete's training plan based on this data:\n"
         + json.dumps(ctx, indent=2),
         _FITNESS_SCHEMA,
-        1200,
+        4096,  # a full weekly plan is large — too small a budget truncates the JSON
     )
 
 
