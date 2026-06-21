@@ -38,3 +38,7 @@ stripe>=9.0.0
 
 # Multipart form parsing for FastAPI file uploads (/convert/photo, /convert/voice)
 python-multipart>=0.0.9
+
+# Error monitoring / observability (main.py imports sentry_sdk at startup, so
+# this is required for the real backend to boot — runs without a SENTRY_DSN).
+sentry-sdk[fastapi]>=2.0.0

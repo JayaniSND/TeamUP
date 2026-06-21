@@ -374,7 +374,12 @@ def answer_question(user_id: str, question: str, response_mode: str = "full") ->
     if cached:
         return {"answer": cached, "sources": [], "cache_hit": True}
 
-    records = rag.retrieve(question, user_id, top_k=8) if rag else athlete_context.get_athlete_notes(user_id, limit=15)
+    records = rag.retrieve(question, user_id, top_k=8) if rag else []
+    if not records:
+        # RAG/Redis returned nothing (not configured, unreachable, or the index
+        # hasn't been back-filled yet) — fall back to reading the athlete's
+        # entries straight from Supabase before giving up.
+        records = athlete_context.get_athlete_notes(user_id, limit=15)
     if not records:
         return {
             "answer": (
