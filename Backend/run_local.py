@@ -89,7 +89,9 @@ if __name__ == "__main__":
     print("Scout:       ", scout.agent.address)
     if logistics is not None:
         print("Logistics:   ", logistics.agent.address)
-    bureau = Bureau(port=int(os.environ.get("BUREAU_PORT", "8000")))
+    # Keep the Bureau OFF port 8000 — that's where the backend (mock_backend /
+    # the real API) lives, and a collision makes the agents' data calls 404.
+    bureau = Bureau(port=int(os.environ.get("BUREAU_PORT", "8800")))
     bureau.add(orchestrator.agent)
     bureau.add(librarian.agent)
     bureau.add(recovery.agent)
