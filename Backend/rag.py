@@ -9,29 +9,33 @@ Three things this module does:
                           writes the vector + metadata to RedisVL so it's
                           searchable later.
 
-  3. retrieve(...)      — KNN search at query time. "How has my serve been?"
-                          returns the 8 journal entries whose *meaning* is closest
-                          to that question, regardless of exact word overlap.
+  3. retrieve(...)      — search at query time. "How has my serve been?"
+                          returns RedisVL entry matches plus relevant Supabase
+                          records across match/training/recovery/metrics/etc.
 
   4. cache_get/set(...)  — semantic response cache (LangCache-inspired). Before
                            calling Claude, check whether a semantically similar
                            question was already answered. Stores (question_embedding,
                            answer) in Redis. Avoids redundant Claude calls.
 
-Everything is behind a single guard: if REDIS_URL is not set, all four
-functions silently no-op and /chat falls back to recency retrieval in main.py.
+Everything is behind a single guard: if REDIS_URL is not set or reachable,
+RedisVL silently no-ops and /chat falls back to Supabase database retrieval.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import socket
 import ssl
 from typing import Optional
 from urllib.parse import urlparse
 
 import numpy as np
+
+from database import supabase
+from services.user_identity import resolve_user_id
 
 log = logging.getLogger("rag")
 
@@ -47,6 +51,220 @@ _model = None          # sentence-transformer, loaded lazily on first embed call
 _index = None          # RedisVL SearchIndex for journal entries
 _cache_index = None    # RedisVL SearchIndex for LangCache
 _redis_unreachable = False
+
+_DB_TABLES = (
+    "entries",
+    "match_results",
+    "training_sessions",
+    "recovery_logs",
+    "metrics",
+    "calendar_events",
+    "sponsorship_opportunities",
+    "agent_outputs",
+)
+
+_TOKEN_ALIASES = {
+    "opponet": "opponent",
+    "opponentt": "opponent",
+    "opponnent": "opponent",
+    "played": "match",
+    "play": "match",
+}
+
+_MATCH_ENTRY_SECTIONS = {"match_results"}
+_MATCH_TEXT_RE = re.compile(
+    r"\b(beat|defeated|lost to|played against|won\b.*\bagainst)\b"
+    r"|(\b\d{1,2}-\d{1,2}\b.*\b(against|opponent|beat|lost|won)\b)"
+    r"|(\b(against|opponent|beat|lost|won)\b.*\b\d{1,2}-\d{1,2}\b)",
+    re.IGNORECASE,
+)
+
+
+def _tokens(text: str) -> set[str]:
+    tokens = {t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 2}
+    expanded = set(tokens)
+    for token in tokens:
+        alias = _TOKEN_ALIASES.get(token)
+        if alias:
+            expanded.add(alias)
+    return expanded
+
+
+def _is_last_opponent_query(q_tokens: set[str]) -> bool:
+    return bool({"last", "latest", "recent", "most"} & q_tokens and {"opponent", "match"} & q_tokens)
+
+
+def _looks_like_match_entry(doc_section: str, text: str) -> bool:
+    return doc_section in _MATCH_ENTRY_SECTIONS or bool(_MATCH_TEXT_RE.search(text or ""))
+
+
+def _doc_score(table: str, doc_section: str, text: str, q_tokens: set[str]) -> int:
+    overlap = len(q_tokens & _tokens(f"{doc_section} {text}"))
+    score = overlap
+
+    # History questions like "who was my last opponet" should land on the
+    # structured match table, not whichever journal note happens to be newest.
+    if table == "match_results" and {"opponent", "match"} & q_tokens:
+        score += 2
+    if table == "match_results" and {"last", "latest", "recent", "most"} & q_tokens:
+        score += 1
+    if table == "entries" and _is_last_opponent_query(q_tokens) and _looks_like_match_entry(doc_section, text):
+        score += 3
+
+    return score
+
+
+def _row_time(row: dict) -> str:
+    return str(row.get("date") or row.get("start_time") or row.get("created_at") or row.get("ts") or "")
+
+
+def _time_rank(value: str) -> float:
+    if not value:
+        return 0.0
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")[:25]).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _doc_text(table: str, row: dict) -> tuple[str, str]:
+    if table == "entries":
+        section = row.get("section") or "entry"
+        text = row.get("text") or ""
+        when = row.get("created_at") or row.get("ts")
+        if when:
+            text = f"Entry on {when}: {text}"
+        return str(section), text
+    if table == "match_results":
+        return "match_results", (
+            f"Match result on {row.get('date') or 'date unknown'}: opponent {row.get('opponent') or 'unknown'}, "
+            f"event {row.get('event_name') or 'unknown'}, result {row.get('result') or 'unknown'}, "
+            f"score {row.get('score') or 'unknown'}. Notes: {row.get('notes') or ''}"
+        ).strip()
+    if table == "training_sessions":
+        return "training", (
+            f"Training session on {row.get('date') or 'date unknown'}: {row.get('session_type') or 'session'}, "
+            f"{row.get('duration_minutes') or '?'} minutes, intensity {row.get('intensity') or '?'}, "
+            f"focus {row.get('focus_area') or 'unknown'}. Notes: {row.get('notes') or ''}"
+        ).strip()
+    if table == "recovery_logs":
+        return "recovery", (
+            f"Recovery log on {row.get('date') or 'date unknown'}: soreness {row.get('soreness_level')}, "
+            f"fatigue {row.get('fatigue_level')}, sleep {row.get('sleep_hours')}, "
+            f"area {row.get('injury_area') or 'none'}, risk {row.get('risk_level') or 'unknown'}. "
+            f"Notes: {row.get('notes') or ''}"
+        ).strip()
+    if table == "metrics":
+        return "metrics", (
+            f"Metric on {row.get('date') or 'date unknown'}: {row.get('metric_name') or 'metric'} "
+            f"= {row.get('metric_value')} {row.get('unit') or ''}"
+        ).strip()
+    if table == "calendar_events":
+        return "logistics", (
+            f"Calendar event {row.get('title') or 'event'}: type {row.get('event_type') or 'event'}, "
+            f"starts {row.get('start_time') or 'unknown'}, ends {row.get('end_time') or 'unknown'}, "
+            f"location {row.get('location') or 'unknown'}."
+        ).strip()
+    if table == "sponsorship_opportunities":
+        return "sponsorship", (
+            f"Sponsorship opportunity {row.get('brand_name') or 'brand'}: category {row.get('category') or 'unknown'}, "
+            f"fit {row.get('fit_score')}, status {row.get('status') or 'unknown'}. "
+            f"Reason: {row.get('reason') or ''}"
+        ).strip()
+    if table == "agent_outputs":
+        return "agent_outputs", (
+            f"{row.get('agent_name') or 'Agent'} output for {row.get('section') or 'section'}: "
+            f"{row.get('summary') or ''} Recommended action: {row.get('recommended_action') or ''}"
+        ).strip()
+    return table, " ".join(str(v) for v in row.values() if v is not None)
+
+
+def _fetch_user_rows(table: str, resolved_user_id: str, limit: int = 40) -> list[dict]:
+    """Read recent rows for a user. We try likely timestamp columns in order so
+    last/most-recent questions are based on actual row dates, not REST default
+    ordering."""
+    for order_col in ("date", "start_time", "created_at"):
+        try:
+            return (
+                supabase.table(table)
+                .select("*")
+                .eq("user_id", resolved_user_id)
+                .order(order_col, desc=True)
+                .limit(limit)
+                .execute()
+                .data
+                or []
+            )
+        except Exception:
+            continue
+
+    rows = (
+        supabase.table(table)
+        .select("*")
+        .eq("user_id", resolved_user_id)
+        .limit(limit)
+        .execute()
+        .data
+        or []
+    )
+    rows.sort(key=lambda row: _time_rank(_row_time(row)), reverse=True)
+    return rows
+
+
+def retrieve_supabase(question: str, user_id: str, top_k: int = 8, section: Optional[str] = None) -> list[dict]:
+    """Retrieve RAG documents directly from Supabase when RedisVL is empty or unavailable.
+
+    Framework v5 keeps RAG grounded in the athlete database. RedisVL is the
+    preferred semantic index, but Supabase remains the source of truth and gives
+    us a deterministic fallback for demos/local development.
+    """
+    resolved_user_id = resolve_user_id(user_id)
+    q_tokens = _tokens(question)
+    docs: list[dict] = []
+
+    for table in _DB_TABLES:
+        try:
+            rows = _fetch_user_rows(table, resolved_user_id, limit=40)
+        except Exception as e:  # noqa: BLE001
+            log.debug("Supabase RAG skip %s for %s: %s", table, resolved_user_id, e)
+            continue
+
+        for row in rows:
+            doc_section, text = _doc_text(table, row)
+            if section and doc_section != section and row.get("section") != section:
+                continue
+            if not text:
+                continue
+            score = _doc_score(table, doc_section, text, q_tokens)
+            docs.append({
+                "entry_id": str(row.get("id") or row.get("entry_id") or f"{table}:{len(docs)}"),
+                "section": doc_section,
+                "text": text,
+                "score": -float(score),
+                "source_table": table,
+                "ts": _row_time(row),
+            })
+
+    if not docs:
+        return []
+
+    if _is_last_opponent_query(q_tokens):
+        match_docs = [
+            d for d in docs
+            if (
+                d.get("section") == "match_results"
+                or _looks_like_match_entry(str(d.get("section") or ""), str(d.get("text") or ""))
+            )
+        ]
+        if match_docs:
+            match_docs.sort(key=lambda d: _time_rank(str(d.get("ts") or "")), reverse=True)
+            return match_docs[:top_k]
+
+    docs.sort(key=lambda d: (d["score"], -_time_rank(str(d.get("ts") or ""))))
+    positive = [d for d in docs if float(d["score"]) < 0]
+    return (positive or docs)[:top_k]
 
 
 # ── Embedding ──────────────────────────────────────────────────────
@@ -204,10 +422,11 @@ def store_entry(entry_id: str, user_id: str, section: str, text: str) -> bool:
         return False
 
     try:
+        resolved_user_id = resolve_user_id(user_id)
         vec = np.array(embed(text), dtype=np.float32)
         idx.load([{
             "entry_id":  str(entry_id),
-            "user_id":   str(user_id),
+            "user_id":   str(resolved_user_id),
             "section":   str(section),
             "text":      text,
             "embedding": vec.tobytes(),
@@ -226,50 +445,65 @@ def retrieve(
     top_k: int = 8,
     section: Optional[str] = None,
 ) -> list[dict]:
-    """KNN search over this athlete's journal entries.
+    """Search over this athlete's RAG corpus.
 
-    Returns up to top_k entries sorted by semantic similarity to `question`.
-    Each result is a dict with entry_id, section, text, score.
+    RedisVL handles embedded entries when available. Supabase structured records
+    are also searched so history questions can draw from match_results, metrics,
+    recovery logs, calendar events, and agent outputs.
 
-    If Redis is unavailable, returns an empty list (caller falls back to
-    recency retrieval).
+    Returns up to top_k docs with entry_id, section, text, score, source_table.
     """
+    redis_docs: list[dict] = []
     idx = _entry_index()
-    if idx is None:
-        return []
 
-    try:
-        from redisvl.query import VectorQuery
-        from redisvl.query.filter import Tag
+    if idx is not None:
+        try:
+            from redisvl.query import VectorQuery
+            from redisvl.query.filter import Tag
 
-        q_vec = np.array(embed(question), dtype=np.float32).tolist()
+            q_vec = np.array(embed(question), dtype=np.float32).tolist()
 
-        user_filter = Tag("user_id") == user_id
-        if section:
-            f = user_filter & (Tag("section") == section)
-        else:
-            f = user_filter
+            resolved_user_id = resolve_user_id(user_id)
+            user_filter = Tag("user_id") == resolved_user_id
+            if section:
+                f = user_filter & (Tag("section") == section)
+            else:
+                f = user_filter
 
-        query = VectorQuery(
-            vector=q_vec,
-            vector_field_name="embedding",
-            return_fields=["entry_id", "text", "section", "user_id"],
-            filter_expression=f,
-            num_results=top_k,
-        )
-        results = idx.query(query)
-        return [
-            {
-                "entry_id": r.get("entry_id"),
-                "section":  r.get("section"),
-                "text":     r.get("text"),
-                "score":    r.get("vector_distance"),
-            }
-            for r in results
-        ]
-    except Exception as e:
-        log.warning("retrieve failed: %s", e)
-        return []
+            query = VectorQuery(
+                vector=q_vec,
+                vector_field_name="embedding",
+                return_fields=["entry_id", "text", "section", "user_id"],
+                filter_expression=f,
+                num_results=top_k,
+            )
+            results = idx.query(query)
+            redis_docs = [
+                {
+                    "entry_id": r.get("entry_id"),
+                    "section":  r.get("section"),
+                    "text":     r.get("text"),
+                    "score":    r.get("vector_distance"),
+                    "source_table": "entries",
+                }
+                for r in results
+            ]
+        except Exception as e:
+            log.warning("retrieve failed: %s", e)
+
+    db_docs = retrieve_supabase(question, user_id, top_k=top_k, section=section)
+    db_relevant = [d for d in db_docs if float(d.get("score") or 0) < 0]
+    combined = [*db_relevant, *redis_docs] if redis_docs else db_docs
+
+    seen: set[tuple[str, str]] = set()
+    deduped: list[dict] = []
+    for doc in combined:
+        key = (str(doc.get("source_table") or "entries"), str(doc.get("entry_id") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(doc)
+    return deduped[:top_k]
 
 
 # ── LangCache ──────────────────────────────────────────────────────
@@ -287,12 +521,13 @@ def cache_get(question: str, user_id: str) -> Optional[str]:
         from redisvl.query import VectorQuery
         from redisvl.query.filter import Tag
 
+        resolved_user_id = resolve_user_id(user_id)
         q_vec = np.array(embed(question), dtype=np.float32).tolist()
         query = VectorQuery(
             vector=q_vec,
             vector_field_name="embedding",
             return_fields=["answer", "question"],
-            filter_expression=Tag("user_id") == user_id,
+            filter_expression=Tag("user_id") == resolved_user_id,
             num_results=1,
         )
         results = idx.query(query)
@@ -314,10 +549,11 @@ def cache_set(question: str, user_id: str, answer: str) -> None:
         return
 
     try:
-        key = f"{user_id}:{hash(question) & 0xFFFFFFFF}"
+        resolved_user_id = resolve_user_id(user_id)
+        key = f"{resolved_user_id}:{hash(question) & 0xFFFFFFFF}"
         vec = np.array(embed(question), dtype=np.float32)
         idx.load([{
-            "user_id":   user_id,
+            "user_id":   resolved_user_id,
             "question":  question,
             "answer":    answer,
             "embedding": vec.tobytes(),

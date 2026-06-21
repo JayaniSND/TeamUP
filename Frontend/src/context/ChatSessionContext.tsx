@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useCalendarEvents } from "@/context/CalendarEventsContext";
-import { ApiError, sendChatMessage } from "@/lib/api";
+import { ApiError, CHAT_SYSTEM_INSTRUCTIONS, sendChatMessage, type ChatMode } from "@/lib/api";
 import type { ChatMessage, SharedCalendarEvent } from "@/types/athlete";
 
 // Monotonic id generator shared by every surface that appends to the thread, so
@@ -21,7 +21,7 @@ interface ChatSessionContextValue {
   messages: ChatMessage[];
   loading: boolean;
   /** Send one message to the orchestrator. Singleton + guarded against double sends. */
-  send: (text: string) => Promise<void>;
+  send: (text: string, opts?: { mode?: ChatMode }) => Promise<void>;
   /** Last externally-seeded question id processed, so co-mounted surfaces dedupe. */
   lastSeedIdRef: MutableRefObject<number>;
 }
@@ -39,6 +39,39 @@ const compactCalendarEvent = (event: SharedCalendarEvent) => ({
   location: event.location,
   source: event.source,
 });
+
+const DASHBOARD_REPLY_LIMIT = 360;
+const DASHBOARD_REPLY_TOTAL_LIMIT = 400;
+const DASHBOARD_DETAILS_LINE = "Open full chat for more details.";
+
+const sentenceEnd = /[.!?]$/;
+
+const truncateAtWord = (text: string, limit: number) => {
+  if (text.length <= limit) return text;
+  const clipped = text.slice(0, limit).replace(/\s+\S*$/, "").replace(/[,:;\s]+$/, "");
+  return clipped || text.slice(0, limit).trim();
+};
+
+const compactDashboardReply = (text: string) => {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return text;
+
+  const sentences = normalized.match(/[^.!?]+(?:[.!?]+|$)/g)?.map((s) => s.trim()).filter(Boolean) ?? [
+    normalized,
+  ];
+  const picked = sentences.slice(0, 3).join(" ").trim();
+  const needsMore =
+    sentences.length > 3 || normalized.length > DASHBOARD_REPLY_LIMIT || normalized.length > picked.length;
+
+  let reply = truncateAtWord(picked, needsMore ? DASHBOARD_REPLY_TOTAL_LIMIT - DASHBOARD_DETAILS_LINE.length - 2 : DASHBOARD_REPLY_LIMIT);
+  if (!sentenceEnd.test(reply)) reply = `${reply}.`;
+
+  if (needsMore && !/open full chat/i.test(reply)) {
+    reply = `${reply} ${DASHBOARD_DETAILS_LINE}`;
+  }
+
+  return reply;
+};
 
 /**
  * Session-level home for the AI chat. The thread, the loading flag, and the
@@ -95,9 +128,10 @@ export function ChatSessionProvider({
     };
   }, [events]);
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, opts: { mode?: ChatMode } = {}) => {
     const question = text.trim();
     if (!question || inFlight.current) return; // ignore empty + duplicate sends
+    const mode = opts.mode ?? "full";
 
     inFlight.current = true;
     setLoading(true);
@@ -112,8 +146,11 @@ export function ChatSessionProvider({
       // decides which agent(s) handle it (incl. travel/booking).
       const reply = await sendChatMessage(question, {
         sessionId: sessionIdRef.current,
+        mode,
+        systemInstruction: CHAT_SYSTEM_INSTRUCTIONS[mode],
         context: {
           page: typeof window !== "undefined" ? window.location.pathname : "/",
+          surface: mode,
           calendar: calendarContext,
         },
         signal: controller.signal,
@@ -127,10 +164,14 @@ export function ChatSessionProvider({
         {
           id: nextChatId(),
           role: "assistant",
-          text: reply.message,
+          text: mode === "dashboard" ? compactDashboardReply(reply.message) : reply.message,
           sources: grounding,
           agents: reply.agentsUsed.length ? reply.agentsUsed : undefined,
-          actions: reply.suggestedActions.length ? reply.suggestedActions : undefined,
+          actions: reply.suggestedActions.length
+            ? mode === "dashboard"
+              ? reply.suggestedActions.slice(0, 2)
+              : reply.suggestedActions
+            : undefined,
           options: reply.options.length ? reply.options : undefined,
         },
       ]);

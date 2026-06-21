@@ -48,18 +48,21 @@ export function ChatThread({
     <div
       ref={scrollRef}
       className={cn(
-        "scroll-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden",
-        full ? "space-y-4 px-0.5 py-1" : "-mr-2 space-y-3 pr-2"
+        "scroll-thin box-border min-h-0 w-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden",
+        full ? "space-y-4 px-1 py-1" : "space-y-3 px-1.5 py-1"
       )}
     >
       {messages.map((m) => (
         <div
           key={m.id}
-          className={cn("fade-up flex flex-col gap-1.5", m.role === "user" ? "items-end" : "items-start")}
+          className={cn(
+            "fade-up box-border flex w-full min-w-0 flex-col gap-1.5",
+            m.role === "user" ? "items-end" : "items-start"
+          )}
         >
           <div
             className={cn(
-              "whitespace-pre-wrap break-words rounded-2xl leading-relaxed shadow-[inset_0_1px_0_rgba(255,255,255,0.58)]",
+              "box-border min-w-0 whitespace-pre-wrap break-words rounded-2xl leading-relaxed shadow-[inset_0_1px_0_rgba(255,255,255,0.58)] [overflow-wrap:anywhere] [word-break:break-word]",
               full ? "max-w-[88%] px-4 py-3 text-sm sm:max-w-[80%]" : "max-w-[85%] px-3.5 py-2.5 text-xs",
               m.role === "user"
                 ? "bg-accent/10 text-text ring-1 ring-accent/18"
@@ -97,11 +100,16 @@ export function ChatThread({
           </div>
 
           {m.role === "assistant" && m.options?.length ? (
-            <div className={cn("flex w-full flex-col gap-1.5", full ? "max-w-[88%] sm:max-w-[80%]" : "max-w-[92%]")}>
+            <div
+              className={cn(
+                "box-border flex w-full min-w-0 flex-col gap-1.5",
+                full ? "max-w-[88%] sm:max-w-[80%]" : "max-w-[92%]"
+              )}
+            >
               {m.options.map((o) => (
                 <div
                   key={o.title}
-                  className="glass-inset flex items-center gap-2 rounded-2xl bg-white/95 p-2 ring-1 ring-line"
+                  className="glass-inset box-border flex max-w-full min-w-0 items-center gap-2 rounded-2xl bg-white/95 p-2 ring-1 ring-line"
                 >
                   <div className="min-w-0 flex-1">
                     <div className={cn("truncate font-semibold text-text", full ? "text-xs" : "text-[11px]")}>
@@ -131,13 +139,18 @@ export function ChatThread({
           ) : null}
 
           {m.role === "assistant" && m.actions?.length ? (
-            <div className={cn("flex flex-wrap gap-1.5", full ? "max-w-[88%] sm:max-w-[80%]" : "max-w-[92%]")}>
+            <div
+              className={cn(
+                "box-border flex max-w-full min-w-0 flex-wrap gap-1.5",
+                full ? "max-w-[88%] sm:max-w-[80%]" : "max-w-[92%]"
+              )}
+            >
               {m.actions.slice(0, full ? 4 : 3).map((a) => (
                 <button
                   key={a}
                   onClick={() => onSend(a)}
                   disabled={loading}
-                  className="glass-chip rounded-xl px-2 py-1 text-left text-[11px] text-text-muted transition-colors hover:border-ai/30 hover:bg-accent/7 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                  className="glass-chip min-w-0 rounded-xl px-2 py-1 text-left text-[11px] text-text-muted transition-colors hover:border-ai/30 hover:bg-accent/7 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {a}
                 </button>
@@ -148,7 +161,7 @@ export function ChatThread({
       ))}
 
       {loading && (
-        <div className="fade-up flex justify-start" aria-live="polite">
+        <div className="fade-up box-border flex w-full min-w-0 justify-start" aria-live="polite">
           <div className="flex items-center gap-1.5 rounded-2xl bg-white/95 px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.58)] ring-1 ring-line">
             <span className="size-1.5 animate-bounce rounded-full bg-ai/70 [animation-delay:-0.2s]" />
             <span className="size-1.5 animate-bounce rounded-full bg-ai/70 [animation-delay:-0.1s]" />

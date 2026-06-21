@@ -44,7 +44,7 @@ const EXAMPLE_PROMPTS: { icon: typeof HeartPulse; label: string }[] = [
  * layout expands.
  */
 export default function AssistantPage() {
-  const { messages, input, setInput, loading, send, submit, book, bookingBusy } = useChatSession();
+  const { messages, input, setInput, loading, send, submit, book, bookingBusy } = useChatSession({ mode: "full" });
 
   // Only the greeting present → show the welcome / example-prompt hero instead
   // of a one-line thread, so the page never opens looking empty.

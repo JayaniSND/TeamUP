@@ -23,12 +23,15 @@ export const AIChatPanel = memo(function AIChatPanel({
   /** an externally triggered question (e.g. a section's Ask-AI button) */
   seed?: ChatSeed | null;
 }) {
-  const { messages, input, setInput, loading, send, submit, book, bookingBusy } = useChatSession({ seed });
+  const { messages, input, setInput, loading, send, submit, book, bookingBusy } = useChatSession({
+    seed,
+    mode: "dashboard",
+  });
 
   if (!open) return null;
 
   return (
-    <aside className="glass-card fade-up fixed bottom-3 right-3 top-3 z-40 flex min-h-0 w-[calc(100vw-1.5rem)] max-w-[380px] flex-col overflow-hidden rounded-[2rem] p-3.5 xl:relative xl:inset-auto xl:z-auto xl:h-full xl:w-full xl:max-w-none xl:p-4">
+    <aside className="glass-card chat-panel-shell fade-up bottom-3 right-3 top-3 z-40 flex min-h-0 w-[calc(100vw-1.5rem)] max-w-[380px] flex-col overflow-hidden rounded-[2rem] p-3.5 xl:inset-auto xl:z-auto xl:h-full xl:w-full xl:max-w-none xl:p-4">
       <header className="flex shrink-0 items-center gap-2.5 border-b border-line pb-3">
         <span className="grid size-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-ai/20 to-accent/20 text-ai ring-1 ring-ai/30">
           <Bot className="size-4.5" strokeWidth={2} />

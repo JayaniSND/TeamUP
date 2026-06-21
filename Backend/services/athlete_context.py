@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 
 from database import supabase
+from .user_identity import resolve_user_id
 
 log = logging.getLogger("athlete_context")
 
@@ -30,8 +31,9 @@ _TRAVEL_EVENT_TYPES = {"tournament", "match", "travel", "competition", "away"}
 def _select(table: str, user_id: str, limit: int, section: str | None = None) -> list[dict]:
     """Newest-first rows for a user; empty list on any failure (missing table,
     connection error). Never raises — callers can always rely on a list."""
+    resolved_user_id = resolve_user_id(user_id)
     try:
-        q = supabase.table(table).select("*").eq("user_id", user_id)
+        q = supabase.table(table).select("*").eq("user_id", resolved_user_id)
         if section:
             q = q.eq("section", section)
         try:
@@ -40,7 +42,7 @@ def _select(table: str, user_id: str, limit: int, section: str | None = None) ->
             res = q.limit(limit).execute()
         return res.data or []
     except Exception as e:  # noqa: BLE001 — missing table / network / auth
-        log.warning("read %s for %s failed: %s", table, user_id, e)
+        log.warning("read %s for %s failed: %s", table, resolved_user_id, e)
         return []
 
 
@@ -95,8 +97,9 @@ def get_athlete_profile(user_id: str) -> dict:
           injury_history jsonb default '[]', created_at timestamptz default now()
         );
     """
+    resolved_user_id = resolve_user_id(user_id)
     try:
-        res = supabase.table("athlete_profiles").select("*").eq("user_id", user_id).limit(1).execute()
+        res = supabase.table("athlete_profiles").select("*").eq("user_id", resolved_user_id).limit(1).execute()
         if res.data:
             row = dict(res.data[0])
             row["data_status"] = "ok"
@@ -107,7 +110,7 @@ def get_athlete_profile(user_id: str) -> dict:
     # No profile table / no row — return an honest placeholder. Downstream
     # prompts treat unknown fields as unknown rather than inventing details.
     return {
-        "user_id": user_id,
+        "user_id": resolved_user_id,
         "name": None,
         "sport": None,
         "position": None,
@@ -123,16 +126,17 @@ def get_athlete_profile(user_id: str) -> dict:
 def load_athlete_context(user_id: str) -> dict:
     """One real snapshot of the athlete from Supabase. Each value is independent
     so a single empty/missing table never blanks the whole context."""
+    resolved_user_id = resolve_user_id(user_id)
     return {
-        "user_id": user_id,
-        "profile": get_athlete_profile(user_id),
-        "entries": get_athlete_notes(user_id, limit=60),
-        "recovery_logs": get_athlete_recovery_logs(user_id),
-        "training": get_athlete_training_logs(user_id),
-        "matches": get_athlete_match_results(user_id),
-        "metrics": get_athlete_performance_metrics(user_id),
-        "schedule": get_athlete_schedule(user_id),
-        "travel": get_athlete_travel_context(user_id),
+        "user_id": resolved_user_id,
+        "profile": get_athlete_profile(resolved_user_id),
+        "entries": get_athlete_notes(resolved_user_id, limit=60),
+        "recovery_logs": get_athlete_recovery_logs(resolved_user_id),
+        "training": get_athlete_training_logs(resolved_user_id),
+        "matches": get_athlete_match_results(resolved_user_id),
+        "metrics": get_athlete_performance_metrics(resolved_user_id),
+        "schedule": get_athlete_schedule(resolved_user_id),
+        "travel": get_athlete_travel_context(resolved_user_id),
     }
 
 

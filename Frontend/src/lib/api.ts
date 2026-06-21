@@ -71,7 +71,8 @@ export function convertVoice(file: Blob, filename = "recording.webm"): Promise<s
 //     orchestrator brain over HTTP. It loads the athlete's real Supabase context,
 //     classifies intent (log / ask / action), routes to the matching specialist
 //     analysis function, and returns one structured reply.
-//       request:  { user_id, message, session_id?, context? }
+//       request:  { user_id, message, session_id?, response_mode?,
+//                   system_instruction?, context? }
 //       response: { message, intent, agents_used[], athlete_context_summary,
 //                   warnings[], suggested_actions[], sources[] }
 //   • The canonical Orchestrator uAgent (agents/orchestrator.py) speaks the ASI:One
@@ -84,6 +85,15 @@ export const USER_ID = (import.meta.env.VITE_USER_ID ?? "demo-athlete").trim();
 
 /** Chat endpoint — the orchestrator brain. Override with VITE_CHAT_ENDPOINT. */
 const CHAT_ENDPOINT = (import.meta.env.VITE_CHAT_ENDPOINT ?? "/orchestrator/chat").trim();
+
+export type ChatMode = "dashboard" | "full";
+
+export const CHAT_SYSTEM_INSTRUCTIONS: Record<ChatMode, string> = {
+  dashboard:
+    "You are a compact dashboard assistant. Answer in 1-3 short sentences. Keep it simple and practical. Do not provide long explanations. If more detail is needed, suggest opening the full chat page.",
+  full:
+    "You are the main assistant. Provide accurate, complete, and helpful answers with enough detail for the user to act on.",
+};
 
 /** A bookable travel option the orchestrator surfaced (flight/hotel/entry). */
 export interface BookingOption {
@@ -239,13 +249,30 @@ const _strArray = (v: unknown): string[] =>
  */
 export async function sendChatMessage(
   message: string,
-  opts: { userId?: string; sessionId?: string; context?: Record<string, unknown>; signal?: AbortSignal } = {}
+  opts: {
+    userId?: string;
+    sessionId?: string;
+    context?: Record<string, unknown>;
+    mode?: ChatMode;
+    systemInstruction?: string;
+    signal?: AbortSignal;
+  } = {}
 ): Promise<ChatReply> {
+  const mode = opts.mode ?? "full";
+  const systemInstruction = opts.systemInstruction ?? CHAT_SYSTEM_INSTRUCTIONS[mode];
+  const context = {
+    ...(opts.context ?? {}),
+    chat_mode: mode,
+    response_mode: mode,
+    system_instruction: systemInstruction,
+  };
   const body = {
     user_id: opts.userId ?? USER_ID,
     message,
     session_id: opts.sessionId,
-    context: opts.context ?? {},
+    response_mode: mode,
+    system_instruction: systemInstruction,
+    context,
   };
 
   if (import.meta.env.DEV) console.debug("[chat] →", CHAT_ENDPOINT, body);

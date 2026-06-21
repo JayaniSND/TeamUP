@@ -158,6 +158,7 @@ from database import supabase  # noqa: E402  (after load_dotenv)
 
 # ── Service layer (Supabase data access + HTTP Orchestrator brain) ──
 from services import athlete_context, booking_service, orchestrator_service  # noqa: E402
+from services.user_identity import resolve_user_id  # noqa: E402
 
 app = FastAPI(title="BASELINE real backend (Supabase)")
 
@@ -238,7 +239,8 @@ def _classify_entries(raw_text: str) -> list[dict]:
 
 def _query(table: str, user_id: str, limit: int, section: str | None = None) -> list[dict]:
     """Fetch rows for a user, newest-first, optional section filter."""
-    q = supabase.table(table).select("*").eq("user_id", user_id)
+    resolved_user_id = resolve_user_id(user_id)
+    q = supabase.table(table).select("*").eq("user_id", resolved_user_id)
     if section:
         q = q.eq("section", section)
     # prefer created_at; fall back to date for tables that only have a date column
@@ -247,7 +249,7 @@ def _query(table: str, user_id: str, limit: int, section: str | None = None) -> 
     except Exception:
         result = q.limit(limit).execute()
     if sentry_sdk.is_initialized() and not result.data:
-        sentry_sdk.set_context("query", {"table": table, "user_id": user_id})
+        sentry_sdk.set_context("query", {"table": table, "user_id": resolved_user_id})
     return result.data or []
 
 
@@ -327,6 +329,8 @@ class OrchestratorChatIn(BaseModel):
     user_id: str = DEMO_USER_ID
     message: str
     session_id: str | None = None
+    response_mode: str | None = None
+    system_instruction: str | None = None
     context: dict = {}  # optional frontend hints (e.g. {"page": "/dashboard"})
 
 
@@ -451,6 +455,7 @@ async def convert_voice(file: UploadFile = File(...)):
 
 @app.post("/ingest")
 def ingest(body: IngestIn):
+    user_id = resolve_user_id(body.user_id)
     if body.input_type not in ("text", "image", "voice"):
         return {"error": "input_type must be 'text', 'image', or 'voice'"}
 
@@ -475,7 +480,7 @@ def ingest(body: IngestIn):
     ts = datetime.now(timezone.utc).isoformat()
 
     raw_result = supabase.table("raw_inputs").insert({
-        "user_id": body.user_id,
+        "user_id": user_id,
         "input_type": body.input_type,
         "raw_text": raw_text,
         "created_at": ts,
@@ -485,7 +490,7 @@ def ingest(body: IngestIn):
     written = []
     for e in entries_data:
         res = supabase.table("entries").insert({
-            "user_id": body.user_id,
+            "user_id": user_id,
             "section": e["section"],
             "text": e["text"],
             "raw_input_id": str(raw_input_id) if raw_input_id else None,
@@ -495,7 +500,7 @@ def ingest(body: IngestIn):
         }).execute()
         row = (res.data or [{}])[0]
         entry_id = row.get("id")
-        stored = rag.store_entry(entry_id, body.user_id, e["section"], e["text"])
+        stored = rag.store_entry(entry_id, user_id, e["section"], e["text"])
         if stored and entry_id:
             supabase.table("entries").update({"embedded": True}).eq("id", entry_id).execute()
         written.append({"entry_id": entry_id, "section": e["section"], "text": e["text"]})
@@ -511,8 +516,9 @@ def ingest(body: IngestIn):
 
 @app.post("/entries")
 def create_entry(e: EntryIn):
+    user_id = resolve_user_id(e.user_id)
     res = supabase.table("entries").insert({
-        "user_id": e.user_id,
+        "user_id": user_id,
         "section": e.section,
         "text": e.text,
         "metadata": e.meta,
@@ -521,7 +527,7 @@ def create_entry(e: EntryIn):
     row = (res.data or [{}])[0]
     entry_id = row.get("id")
 
-    stored = rag.store_entry(entry_id, e.user_id, e.section, e.text)
+    stored = rag.store_entry(entry_id, user_id, e.section, e.text)
     if stored and entry_id:
         supabase.table("entries").update({"embedded": True}).eq("id", entry_id).execute()
 
@@ -666,11 +672,11 @@ def dashboard_sponsorship(user_id: str):
 # ── /chat : RAG + LangCache ────────────────────────────────────────
 # 1. Check LangCache — if a semantically similar question was answered
 #    recently, return it immediately (no embed, no KNN, no Claude call).
-# 2. Retrieve — KNN search over RedisVL for the athlete's entries most
-#    semantically similar to the question. Falls back to recency query
-#    if Redis is not connected.
-# 3. Generate — Claude reads the retrieved entries and answers. Answer
-#    is grounded in actual journal text, not generic sports knowledge.
+# 2. Retrieve — RedisVL searches embedded entries when available, and rag.py
+#    also searches Supabase structured tables like match_results and metrics.
+# 3. Generate — Claude reads the retrieved database records and answers.
+#    Answers are grounded in athlete history, not frontend context or generic
+#    sports knowledge.
 # 4. Cache — store (question, answer) in LangCache for future hits.
 
 @app.post("/chat")
@@ -682,8 +688,9 @@ def chat(body: ChatIn):
 
 
 # ── /orchestrator/chat : the frontend's single AI entry point ──────
-# The frontend sends EVERY chat message here with only { user_id, message,
-# session_id?, context? }. The orchestrator loads the athlete's real Supabase
+# The frontend sends EVERY chat message here with { user_id, message,
+# session_id?, response_mode?, system_instruction?, context? }. The orchestrator
+# loads the athlete's real Supabase
 # context, classifies intent, and routes to the right specialist analysis
 # function — the frontend never chooses an agent. Returns a structured reply:
 #   { message, intent, agents_used, athlete_context_summary, warnings,
@@ -697,6 +704,8 @@ async def orchestrator_chat(body: OrchestratorChatIn):
         user_id=body.user_id,
         message=body.message,
         session_id=body.session_id,
+        response_mode=body.response_mode,
+        system_instruction=body.system_instruction,
         context=body.context,
     )
 
@@ -729,6 +738,8 @@ def list_bookings(user_id: str = DEMO_USER_ID):
 @app.post("/admin/seed")
 def admin_seed(user_id: str = DEMO_USER_ID):
     """Insert linguistic-drift trail, burnout arc, matches, training, recovery, metrics, calendar."""
+    user_id = resolve_user_id(user_id)
+
     def _ts(days_ago: int) -> str:
         return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
 
@@ -834,6 +845,7 @@ def admin_backfill(user_id: str = DEMO_USER_ID):
     if not rag.REDIS_URL:
         return {"error": "REDIS_URL not set — RedisVL unavailable"}
 
+    user_id = resolve_user_id(user_id)
     rows = supabase.table("entries").select("*").eq("user_id", user_id).eq("embedded", False).execute()
     entries = [_norm_entry(r) for r in (rows.data or [])]
     stored = rag.backfill_entries(entries)
@@ -848,6 +860,7 @@ def admin_backfill(user_id: str = DEMO_USER_ID):
 @app.post("/admin/clear")
 def admin_clear(user_id: str = DEMO_USER_ID):
     """Delete all rows for a user — use before re-seeding."""
+    user_id = resolve_user_id(user_id)
     tables = [
         "entries", "raw_inputs", "training_sessions", "match_results",
         "recovery_logs", "metrics", "calendar_events",

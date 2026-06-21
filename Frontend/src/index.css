@@ -101,6 +101,16 @@ body {
   box-shadow: var(--shadow-glass);
 }
 
+.chat-panel-shell {
+  position: fixed;
+}
+
+@media (min-width: 80rem) {
+  .chat-panel-shell {
+    position: relative;
+  }
+}
+
 .aurora-shell {
   position: relative;
   background:

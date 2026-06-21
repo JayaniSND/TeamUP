@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useChatSessionState } from "@/context/ChatSessionContext";
 import { useCalendarEvents } from "@/context/CalendarEventsContext";
+import type { ChatMode } from "@/lib/api";
 import type { BookingOption } from "@/types/athlete";
 
 /** An externally triggered question (e.g. a section's Ask-AI button). */
@@ -21,12 +22,17 @@ export interface ChatSeed {
  * in-app PaymentModal (via the calendar context), so the app never reloads and
  * the chat history + originating route are preserved.
  */
-export function useChatSession(opts: { seed?: ChatSeed | null } = {}) {
-  const { seed } = opts;
-  const { messages, loading, send, lastSeedIdRef } = useChatSessionState();
+export function useChatSession(opts: { seed?: ChatSeed | null; mode?: ChatMode } = {}) {
+  const { seed, mode = "full" } = opts;
+  const { messages, loading, send: sendMessage, lastSeedIdRef } = useChatSessionState();
   const { startPayment, pendingPayment } = useCalendarEvents();
 
   const [input, setInput] = useState("");
+
+  const send = useCallback(
+    (text: string) => sendMessage(text, { mode }),
+    [mode, sendMessage]
+  );
 
   const book = useCallback(
     (option: BookingOption) => {
