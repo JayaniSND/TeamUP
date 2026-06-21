@@ -17,7 +17,7 @@ import {
   sendChatMessage,
   type ChatMode,
 } from "@/lib/api";
-import { applyAgentTraceEvent, resetAgentActivity } from "@/lib/agents/agentActivityStore";
+import { applyAgentTraceEvent, resetAgentActivity, seedFlow } from "@/lib/agents/agentActivityStore";
 import {
   isPaymentSessionActive,
   restorePaymentSessionState,
@@ -172,6 +172,7 @@ export function ChatSessionProvider({
   // two co-mounted surfaces can't fire the same send twice.
   const inFlight = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const lastSeedIdRef = useRef(0);
 
   const calendarContext = useMemo(() => {
@@ -220,8 +221,14 @@ export function ChatSessionProvider({
     const flowId = newRuntimeId("flow");
     const messageId = newRuntimeId("msg");
 
+    // Close any still-open stream from a superseded message so its trailing
+    // events can't bleed into this flow, reset to idle, then optimistically light
+    // the Orchestrator node immediately (before the first live SSE event).
+    eventSourceRef.current?.close();
     resetAgentActivity();
+    seedFlow(flowId, messageId);
     const { eventSource, ready: streamReady } = openAgentActivityStream(flowId, messageId);
+    eventSourceRef.current = eventSource;
 
     setMessages((m) => [...m, { id: messageId, role: "user", text: question, flowId, messageId }]);
 
@@ -279,8 +286,13 @@ export function ChatSessionProvider({
         },
       ]);
     } finally {
+      // Keep the stream open briefly so the trailing final_response_completed
+      // event can land, then close it (unless a newer send already replaced it).
       if (eventSource) {
-        window.setTimeout(() => eventSource?.close(), 1000);
+        window.setTimeout(() => {
+          eventSource.close();
+          if (eventSourceRef.current === eventSource) eventSourceRef.current = null;
+        }, 1000);
       }
       if (abortRef.current === controller) {
         inFlight.current = false;

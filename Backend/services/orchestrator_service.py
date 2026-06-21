@@ -108,8 +108,14 @@ _AGENT_LABELS = {
 
 
 def _finalize(response: dict, tr: tracker.AgentEventTracker | None, mode: str) -> dict:
-    """Attach the live-captured trace + ids, then apply the response mode."""
+    """Attach the live-captured trace + ids, then apply the response mode.
+
+    Emits the terminal `final_response_completed` event if no route reached it
+    yet — so EVERY path (early returns, intent/route errors) closes the live SSE
+    stream and settles the graph, not just the happy path."""
     if tr is not None:
+        if tr.ended_at is None:
+            tr.final_response("Answer ready")
         response["agent_trace"] = tr.get_trace()
         response["agentTrace"] = response["agent_trace"]
         response["flowId"] = tr.flow_id
@@ -550,6 +556,72 @@ async def _route_ask(user_id, message, ctx, ctx_summary, warnings, mode: str = "
     )
 
 
+# ── real specialist-to-specialist chaining ──────────────────────────────────
+# The canonical uAgents chain across specialists: Recovery fans out to Fitness +
+# Coaching on a physical flag, and Coaching chains to Fitness for a conditioning
+# gap (see agents/recovery.py, agents/coaching.py). The HTTP orchestrator runs
+# those SAME chains inline so a single chat message lights up the real
+# multi-agent graph — not just Orchestrator→one specialist. Every hop is a real
+# Claude call wrapped in track_agent_call(from→to), so the inter-agent edges
+# stream to the Live Agent visualization the instant they happen.
+
+def _coaching_entries(ctx: dict) -> list[dict]:
+    return [e for e in (ctx.get("entries") or []) if e.get("section") == "coaching"]
+
+
+def _with_addenda(message: str, addenda: list[tuple[str, str]]) -> str:
+    """Append the chained specialists' contributions as short labeled sections so
+    the multi-agent work is reflected in the answer, not just the visualization."""
+    if not addenda:
+        return message
+    return message + "\n\n" + "\n\n".join(f"{label}\n{text}" for label, text in addenda if text)
+
+
+async def _chain_fitness(ctx: dict, note: str, recovery_verdict: dict | None, frm: str) -> dict:
+    """Run the Fitness specialist as a real chained call (frm → fitness)."""
+    plan = await tracker.track_agent_call(
+        from_agent=frm,
+        to_agent="fitness",
+        step="Adjusting the training plan",
+        call=lambda: claude.suggest_fitness_plan(
+            note, ctx.get("training") or [], ctx.get("recovery_logs") or [],
+            ctx.get("entries") or [], recovery_verdict or {},
+        ),
+    )
+    await asyncio.to_thread(
+        _persist_output, ctx["user_id"], "Fitness Agent", "training",
+        plan.get("summary", ""), "info", plan.get("recommended_action", ""),
+    )
+    return plan
+
+
+async def _chain_coaching(ctx: dict, message: str, context_type: str,
+                          recovery_verdict: dict | None, frm: str) -> dict:
+    """Run the Coaching specialist (frm → coaching); on a physical gap, Coaching
+    chains on to Fitness (coaching → fitness)."""
+    verdict = await tracker.track_agent_call(
+        from_agent=frm,
+        to_agent="coaching",
+        step="Coordinating coaching strategy",
+        call=lambda: claude.coach_strategy(
+            context_type, message, _coaching_entries(ctx), ctx.get("matches") or [], recovery_verdict
+        ),
+    )
+    await asyncio.to_thread(
+        _persist_output, ctx["user_id"], "Coaching Agent", "coaching",
+        verdict.get("summary", ""),
+        "medium" if context_type == "injury_accommodation" else "info",
+        verdict.get("recommended_action", ""),
+    )
+    focus = str(verdict.get("fitness_focus") or "").strip()
+    if focus:
+        try:
+            await _chain_fitness(ctx, f"Build targeted conditioning for: {focus}.", recovery_verdict, "coaching")
+        except Exception:  # noqa: BLE001 — a chain hop must never break the answer
+            log.exception("coaching→fitness chain failed")
+    return verdict
+
+
 async def _route_action(user_id, message, agent, ctx, ctx_summary, warnings, booking_intent: str = "general") -> dict:
     if agent == "recovery":
         v = await tracker.track_agent_call(
@@ -563,8 +635,41 @@ async def _route_action(user_id, message, agent, ctx, ctx_summary, warnings, boo
         await asyncio.to_thread(_persist_output, user_id, "Recovery Agent", "recovery",
                                 v.get("summary", ""), v.get("severity", "info"),
                                 v.get("recommended_action", ""))
+
+        # Real agent chain (mirrors agents/recovery.py): a medium/high physical flag
+        # fans out to Fitness (adjust the plan) AND Coaching (accommodate the injury)
+        # — run concurrently, exactly as the uAgent fires them — and Coaching can
+        # chain on to Fitness for a conditioning gap. Each hop is a real Claude call
+        # wrapped in track_agent_call, so the Live Agent graph streams the true
+        # Recovery→Fitness, Recovery→Coaching, Coaching→Fitness edges as they happen.
+        agents_used = ["recovery"]
+        addenda: list[tuple[str, str]] = []
+        risk = str(v.get("risk_level") or "none").lower()
+        if risk in ("medium", "high"):
+            fitness_res, coaching_res = await asyncio.gather(
+                _chain_fitness(ctx, "Adjust next week's plan around this recovery flag.", v, "recovery"),
+                _chain_coaching(ctx, message, "injury_accommodation", v, "recovery"),
+                return_exceptions=True,
+            )
+            if isinstance(fitness_res, dict):
+                agents_used.append("fitness")
+                if fitness_res.get("summary"):
+                    addenda.append(("Training Adjustment", _short_text(fitness_res.get("summary"), 170)))
+            elif isinstance(fitness_res, Exception):
+                log.warning("recovery→fitness chain failed: %s", fitness_res)
+            if isinstance(coaching_res, dict):
+                agents_used.append("coaching")
+                if str(coaching_res.get("fitness_focus") or "").strip():
+                    agents_used.append("fitness")
+                advice = coaching_res.get("tactical_advice") or coaching_res.get("summary")
+                if advice:
+                    addenda.append(("Strategy Tweak", _short_text(advice, 170)))
+            elif isinstance(coaching_res, Exception):
+                log.warning("recovery→coaching chain failed: %s", coaching_res)
+
         return _envelope(
-            _format_recovery(v), intent="action", agents=[_AGENT_LABELS["recovery"]],
+            _with_addenda(_format_recovery(v), addenda),
+            intent="action", agents=list(dict.fromkeys(agents_used)),
             ctx_summary=ctx_summary, warnings=warnings,
             suggested=["What should I change in training this week?", "Find me an upcoming event"],
         )
@@ -580,8 +685,27 @@ async def _route_action(user_id, message, agent, ctx, ctx_summary, warnings, boo
         )
         await asyncio.to_thread(_persist_output, user_id, "Performance Agent", "performance",
                                 v.get("summary", ""), "info", v.get("recommended_focus", ""))
+
+        # Real chain (agents/coaching.py performance_gap): a weak area or declining
+        # trend routes Performance→Coaching, which may chain Coaching→Fitness.
+        agents_used = ["performance"]
+        addenda = []
+        weak = str(v.get("weakest_area") or "").strip()
+        if weak or str(v.get("trend") or "").lower() == "declining":
+            try:
+                adv = await _chain_coaching(ctx, message, "performance_gap", None, "performance")
+                agents_used.append("coaching")
+                if str(adv.get("fitness_focus") or "").strip():
+                    agents_used.append("fitness")
+                advice = adv.get("tactical_advice") or adv.get("summary")
+                if advice:
+                    addenda.append(("Coaching Focus", _short_text(advice, 170)))
+            except Exception:  # noqa: BLE001 — a chain hop must never break the answer
+                log.exception("performance→coaching chain failed")
+
         return _envelope(
-            _format_performance(v), intent="action", agents=[_AGENT_LABELS["performance"]],
+            _with_addenda(_format_performance(v), addenda),
+            intent="action", agents=list(dict.fromkeys(agents_used)),
             ctx_summary=ctx_summary, warnings=warnings,
             suggested=["Where am I losing points?", "Am I overtraining?"],
         )
