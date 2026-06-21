@@ -4,8 +4,8 @@ import { Sidebar } from "@/components/dashboard/Sidebar";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { OverviewCards } from "@/components/dashboard/OverviewCards";
 import { PerformanceChart } from "@/components/dashboard/PerformanceChart";
-import { FormResultsCard } from "@/components/dashboard/FormResultsCard";
 import { RecoveryPanel } from "@/components/dashboard/RecoveryPanel";
+import { WeeklyCalendar } from "@/components/dashboard/WeeklyCalendar";
 import { AgentInsightsStrip } from "@/components/dashboard/AgentInsightsStrip";
 import { AIChatPanel } from "@/components/dashboard/AIChatPanel";
 import { cn } from "@/lib/utils";
@@ -13,8 +13,8 @@ import { athleteData } from "@/data/mockAthleteData";
 
 const MOBILE_NAV = [
   ["overview", "Overview"],
+  ["calendar", "Calendar"],
   ["performance", "Load"],
-  ["form", "Form"],
   ["recovery", "Recovery"],
   ["insights", "AI"],
 ] as const;
@@ -39,9 +39,9 @@ export default function App() {
   const h = useMemo(
     () => ({
       overview: () => askAI("What should I focus on next week?", "p1"),
-      explainForm: () => askAI("Explain my recent form and results.", "p6"),
       explainTrend: () => askAI("Explain my recent performance trend.", "p6"),
       recovery: () => askAI("Check my recovery risk.", "p3"),
+      calendar: () => askAI("Add this week's plan to my calendar.", "p9"),
       agent: (prompt: string, replyId?: string) => askAI(prompt, replyId),
     }),
     [askAI]
@@ -96,7 +96,8 @@ export default function App() {
                   chatOpen ? "xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_330px]" : "xl:grid-cols-1"
                 )}
               >
-                <div className="grid min-h-0 grid-cols-1 gap-3 xl:grid-cols-12 xl:grid-rows-[auto_minmax(0,1fr)]">
+                <div className="board-surface grid min-h-0 grid-cols-1 gap-3 rounded-[1.6rem] p-2.5 lg:h-full xl:grid-cols-12 xl:grid-rows-[auto_minmax(0,1fr)_auto]">
+                  {/* Top band — high-impact KPIs + next agent action */}
                   <div id="overview" className="scroll-mt-24 xl:col-span-8 lg:scroll-mt-8">
                     <OverviewCards metrics={data.overview} />
                   </div>
@@ -105,13 +106,18 @@ export default function App() {
                     <AgentInsightsStrip insights={data.insights} onAsk={h.agent} delay={0.03} />
                   </div>
 
-                  <div className="min-h-0 xl:col-span-8">
-                    <PerformanceChart data={data.performance} onAction={h.explainTrend} />
+                  {/* Center band — the Weekly Calendar is the focus and grows to fill */}
+                  <div className="min-h-[280px] xl:col-span-12 xl:min-h-0">
+                    <WeeklyCalendar calendar={data.weeklyCalendar} onAddCalendar={h.calendar} />
                   </div>
 
-                  <div className="grid min-h-0 grid-cols-1 gap-3 xl:col-span-4 xl:grid-rows-[auto_minmax(0,1fr)]">
+                  {/* Bottom band — Performance + Recovery, secondary */}
+                  <div className="h-[260px] xl:col-span-8 xl:h-[244px]">
+                    <PerformanceChart data={data.performance} onExplainTrend={h.explainTrend} />
+                  </div>
+
+                  <div className="h-[260px] xl:col-span-4 xl:h-[244px]">
                     <RecoveryPanel recovery={data.recovery} insight={recoveryInsight} onAction={h.recovery} />
-                    <FormResultsCard form={data.form} onAction={h.explainForm} />
                   </div>
                 </div>
 
@@ -131,7 +137,7 @@ export default function App() {
         {!chatOpen && (
           <button
             onClick={openChat}
-            className="card-hover fixed bottom-5 right-5 z-40 grid size-14 place-items-center rounded-3xl bg-accent text-white shadow-[0_18px_42px_-16px_rgba(49,164,105,0.62)]"
+            className="card-hover fixed bottom-5 right-5 z-40 grid size-14 place-items-center rounded-3xl bg-accent text-white shadow-[0_18px_42px_-16px_rgba(47,160,132,0.6)]"
             aria-label="Open AI chat"
           >
             <Bot className="size-6" strokeWidth={2} />
