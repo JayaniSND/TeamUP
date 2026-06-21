@@ -32,9 +32,10 @@ export type AgentNodeMeta = AgentMeta;
 
 export type AgentActivityStatus = "idle" | "planned" | "in_progress" | "completed" | "error";
 
-// Status precedence — a later event can only ADVANCE a node/line, never regress it.
-// Lets the optimistic "planned" pre-seed and out-of-order live events settle
-// sensibly: planned → in_progress → completed, with error/completed sticking.
+// Status precedence for inactive states. `in_progress` is intentionally allowed
+// to override `completed` because the orchestrator participates in several
+// separate steps during one message: routing, specialist calls, and final
+// response composition.
 const STATUS_RANK: Record<AgentActivityStatus, number> = {
   idle: 0,
   planned: 1,
@@ -45,7 +46,13 @@ const STATUS_RANK: Record<AgentActivityStatus, number> = {
 const mergeStatus = (
   cur: AgentActivityStatus | undefined,
   next: AgentActivityStatus
-): AgentActivityStatus => (STATUS_RANK[next] >= STATUS_RANK[cur ?? "idle"] ? next : (cur ?? "idle"));
+): AgentActivityStatus => {
+  const current = cur ?? "idle";
+  if (current === "error") return "error";
+  if (next === "in_progress") return "in_progress";
+  if (next === "planned" && current !== "idle" && current !== "planned") return current;
+  return STATUS_RANK[next] >= STATUS_RANK[current] ? next : current;
+};
 
 /** A communication line between two agents that are actually talking. */
 export interface AgentConnection {
@@ -100,6 +107,7 @@ const initialState: AgentActivityState = {
 };
 
 let state: AgentActivityState = initialState;
+let seenEventIds = new Set<string>();
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -139,6 +147,7 @@ export function setAgentActivity(
 /** Return to the idle resting state. */
 export function resetAgentActivity(): void {
   state = { ...initialState, lastUpdated: Date.now() };
+  seenEventIds = new Set();
   emit();
 }
 
@@ -150,6 +159,7 @@ export function resetAgentActivity(): void {
  * `source: "planned"` so the panel knows real events haven't streamed yet.
  */
 export function seedPlannedFlow(flowId: string, messageId: string, planned: AgentId[]): void {
+  seenEventIds = new Set();
   const agents: AgentId[] = ["orchestrator"];
   const nodeStatus: Partial<Record<AgentId, AgentActivityStatus>> = { orchestrator: "in_progress" };
   const connections: AgentConnection[] = [];
@@ -192,55 +202,15 @@ const statusFrom = (value?: string): AgentActivityStatus =>
 
 const connectionKey = (from: AgentId, to: AgentId) => [from, to].sort().join("<->");
 
-function keepLiveEdge(
-  agents: AgentId[],
-  nodeStatus: Partial<Record<AgentId, AgentActivityStatus>>,
-  connections: AgentConnection[],
-  activeAgent: AgentId | null
-): { nodeStatus: Partial<Record<AgentId, AgentActivityStatus>>; connections: AgentConnection[]; activeAgent: AgentId | null } {
-  if (connections.some((conn) => conn.status === "in_progress")) {
-    return { nodeStatus, connections, activeAgent };
-  }
-
-  const peer =
-    (activeAgent && activeAgent !== "orchestrator" ? activeAgent : null) ??
-    agents.find((id) => id !== "orchestrator" && nodeStatus[id] === "planned") ??
-    [...connections]
-      .reverse()
-      .map((conn) => (conn.from === "orchestrator" ? conn.to : conn.from))
-      .find((id) => id !== "orchestrator") ??
-    agents.find((id) => id !== "orchestrator") ??
-    null;
-
-  if (!peer) return { nodeStatus, connections, activeAgent };
-
-  const nextNodeStatus = {
-    ...nodeStatus,
-    orchestrator: "in_progress" as AgentActivityStatus,
-    [peer]: "in_progress" as AgentActivityStatus,
-  } satisfies Partial<Record<AgentId, AgentActivityStatus>>;
-  const nextConnections = [...connections];
-  const idx = nextConnections.findIndex(
-    (conn) =>
-      (conn.from === "orchestrator" && conn.to === peer) ||
-      (conn.from === peer && conn.to === "orchestrator")
-  );
-
-  if (idx >= 0) {
-    nextConnections[idx] = { ...nextConnections[idx], status: "in_progress" };
-  } else {
-    nextConnections.push({ from: "orchestrator", to: peer, status: "in_progress" });
-  }
-
-  return {
-    nodeStatus: nextNodeStatus,
-    connections: nextConnections,
-    activeAgent: activeAgent && activeAgent !== "orchestrator" ? activeAgent : peer,
-  };
-}
-
 export function applyAgentTraceEvent(entry: AgentTraceEntry): void {
+  if (entry.flowId && state.currentFlowId && entry.flowId !== state.currentFlowId) return;
+  if (entry.eventId) {
+    if (seenEventIds.has(entry.eventId)) return;
+    seenEventIds.add(entry.eventId);
+  }
+
   const status = statusFrom(entry.status);
+  const completed = entry.type === "final_response_completed";
   let from = resolveAgentId(entry.from) ?? resolveAgentId(entry.fromAgent);
   let to = resolveAgentId(entry.to) ?? resolveAgentId(entry.toAgent);
   const node = resolveAgentId(entry.agent) ?? resolveAgentId(entry.agentName);
@@ -292,17 +262,16 @@ export function applyAgentTraceEvent(entry: AgentTraceEntry): void {
         }
         activeAgent = target;
       } else if (status === "completed") {
-        activeAgent = null;
+        if (completed || activeAgent === target) activeAgent = null;
       }
       // planned/idle: keep the orchestrator pulsing; don't promote a planned node.
     } else if (node) {
       add(node);
       nodeStatus[node] = mergeStatus(nodeStatus[node], status);
       if (status === "in_progress") activeAgent = node;
-      else if (status === "completed") activeAgent = null;
+      else if (status === "completed" && (completed || activeAgent === node)) activeAgent = null;
     }
 
-    const completed = entry.type === "final_response_completed";
     const errored = status === "error";
     const nextStatus: AgentActivityStatus = errored ? "error" : completed ? "completed" : "in_progress";
 
@@ -323,12 +292,6 @@ export function applyAgentTraceEvent(entry: AgentTraceEntry): void {
       outConnections = outConnections
         .filter((c) => outAgents.includes(c.from) && outAgents.includes(c.to) && c.status !== "planned")
         .map((c) => (c.status === "error" ? c : { ...c, status: "completed" }));
-    }
-    if (!completed && !errored && nextStatus === "in_progress") {
-      const live = keepLiveEdge(outAgents, outNodeStatus, outConnections, activeAgent);
-      outNodeStatus = live.nodeStatus;
-      outConnections = live.connections;
-      activeAgent = live.activeAgent;
     }
     const flow = flowLabelFor(outAgents) ?? prev.currentFlow;
 

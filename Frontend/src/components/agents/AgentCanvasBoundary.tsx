@@ -1,15 +1,22 @@
 import { Component, type ReactNode } from "react";
 
+let cachedWebGLSupport: boolean | null = null;
+
 /** True when the browser can create a WebGL context (so we can mount the 3D). */
 export function supportsWebGL(): boolean {
+  if (cachedWebGLSupport !== null) return cachedWebGLSupport;
   if (typeof document === "undefined") return false;
   try {
     const canvas = document.createElement("canvas");
-    return !!(
-      window.WebGLRenderingContext &&
-      (canvas.getContext("webgl") || canvas.getContext("experimental-webgl"))
-    );
+    const gl = window.WebGLRenderingContext
+      ? ((canvas.getContext("webgl") ||
+          canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null)
+      : null;
+    cachedWebGLSupport = !!gl;
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    return cachedWebGLSupport;
   } catch {
+    cachedWebGLSupport = false;
     return false;
   }
 }

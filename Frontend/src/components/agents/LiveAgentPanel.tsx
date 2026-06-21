@@ -5,7 +5,6 @@ import { useChatSessionState } from "@/context/ChatSessionContext";
 import { useCalendarEvents } from "@/context/CalendarEventsContext";
 import {
   setAgentActivity,
-  getAgentActivitySnapshot,
   useAgentActivity,
   applyAgentTraceEvents,
   type AgentActivityState,
@@ -24,7 +23,7 @@ const AgentNetwork3D = lazy(() => import("./AgentNetwork3D"));
 type NodeStatus = AgentActivityState["status"];
 
 const dedupe = (ids: AgentId[]): AgentId[] => Array.from(new Set(ids));
-const connKey = (from: AgentId, to: AgentId) => `${from}->${to}`;
+const connKey = (from: AgentId, to: AgentId) => [from, to].sort().join("<->");
 
 /** Merge connections by from→to key (incoming wins). */
 function mergeConns(prev: AgentConnection[], incoming: AgentConnection[]): AgentConnection[] {
@@ -59,15 +58,32 @@ function extendState(prev: AgentActivityState, opts: ExtendOpts): Partial<AgentA
   };
 }
 
+function finishVisibleFlow(prev: AgentActivityState): Partial<AgentActivityState> {
+  const nodeStatus = { ...prev.nodeStatus };
+  for (const id of prev.agents) {
+    const cur = nodeStatus[id] ?? "idle";
+    nodeStatus[id] = cur === "error" ? "error" : "completed";
+  }
+
+  return {
+    status: "completed",
+    activeAgent: null,
+    activeStep: prev.latestEvent === "final_response_completed" ? prev.activeStep : "Answer ready",
+    nodeStatus,
+    connections: prev.connections.map((conn) =>
+      conn.status === "error" ? conn : { ...conn, status: "completed" }
+    ),
+  };
+}
+
 /**
  * Live activity driver. The Live Agent graph is driven IN REAL TIME by the SSE
  * stream (see ChatSessionContext.openAgentActivityStream → applyAgentTraceEvent),
  * which lights each agent and edge the instant the backend calls it. This hook
  * only handles the lifecycle AROUND that live stream:
  *   • when a reply lands, finalize the live formation and fade back to idle;
- *   • if the stream never delivered (EventSource unsupported/blocked), apply the
- *     REAL backend trace once — instantly, never a paced "replay after the
- *     response" and never a keyword-guessed fake;
+ *   • when the reply lands, reconcile the REAL backend trace once so any partial
+ *     SSE delivery is filled in instantly, never as a paced post-response replay;
  *   • append the booking payment/calendar stages ONLY from real Stripe/calendar
  *     events. It never touches the chat engine — it observes shared state.
  */
@@ -120,24 +136,15 @@ function useLiveAgentActivity() {
         return;
       }
 
-      const snap = getAgentActivitySnapshot();
-      // The live SSE stream delivered if the store is on this reply's flow AND real
-      // backend events promoted the source to "trace". We can't key off "a non-
-      // orchestrator node exists" anymore, because the optimistic plan pre-seeds the
-      // predicted specialists (source stays "planned" until real activity streams).
-      const liveStreamed =
-        !!lastAssistant?.flowId &&
-        snap.currentFlowId === lastAssistant.flowId &&
-        snap.source === "trace";
-
-      // If the SSE stream never delivered, apply the REAL backend trace once —
-      // instantly, never a paced post-response replay and never a fake.
-      if (!liveStreamed && lastAssistant?.trace?.length) {
+      // Reconcile with the returned REAL backend trace. The store dedupes event ids,
+      // so this fills any SSE gap without replaying events the live stream already
+      // delivered and without keyword-guessed fake activity.
+      if (lastAssistant?.trace?.length) {
         applyAgentTraceEvents(lastAssistant.trace);
       }
 
       // Finalize the formation (live or trace) and fade the active agent away.
-      setAgentActivity({ status: "completed", activeAgent: null });
+      setAgentActivity(finishVisibleFlow);
     }
     // messages are read via ref; only the loading transition drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -239,15 +246,17 @@ export function LiveAgentPanel() {
   const netRef = useRef<HTMLDivElement>(null);
   const { inView, docVisible } = useVisibility(netRef);
   const reducedMotion = useReducedMotion();
+  const [webGLSupported] = useState(() => supportsWebGL());
 
   // Mount the 3D scene eagerly in this panel. The user is here to watch the
   // live agent system, so waiting for a deep canvas well to intersect can make
   // the panel look static even while a request is running.
-  const canUse3D = !reducedMotion && supportsWebGL();
-  const paused = !inView || !docVisible || !!reducedMotion;
+  const canUse3D = !reducedMotion && webGLSupported;
+  const liveRequest = activity.status === "in_progress" || activity.status === "planned";
+  const paused = !docVisible || !!reducedMotion || (!liveRequest && !inView);
 
   return (
-    <section className="glass-card fade-up flex min-h-0 min-w-0 flex-col rounded-[1.65rem] p-4 xl:flex-1 xl:max-h-full">
+    <section className="glass-card fade-up flex min-h-0 min-w-0 flex-col rounded-[1.65rem] p-4 lg:flex-1 lg:max-h-full">
       <header className="flex shrink-0 items-center gap-2.5 border-b border-line pb-3">
         <span className="grid size-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-ai/20 to-accent/20 text-ai ring-1 ring-ai/30">
           <Workflow className="size-4.5" strokeWidth={2} />
@@ -264,7 +273,7 @@ export function LiveAgentPanel() {
 
       <div
         ref={netRef}
-        className="relative mt-3 flex h-[260px] min-h-[220px] min-w-0 grow items-center justify-center overflow-hidden rounded-[1.35rem] bg-[radial-gradient(circle_at_50%_18%,rgba(31,159,104,0.13),rgba(255,255,255,0.40)_42%,rgba(226,246,236,0.30)_100%)] ring-1 ring-line/80 sm:h-[300px] xl:h-auto xl:min-h-[260px]"
+        className="relative mt-3 flex h-[260px] min-h-[220px] min-w-0 grow items-center justify-center overflow-hidden rounded-[1.35rem] bg-[radial-gradient(circle_at_50%_18%,rgba(31,159,104,0.13),rgba(255,255,255,0.40)_42%,rgba(226,246,236,0.30)_100%)] ring-1 ring-line/80 sm:h-[300px] lg:h-auto lg:min-h-[260px]"
       >
         {canUse3D ? (
           <AgentCanvasBoundary fallback={<AgentNetwork activity={activity} />}>

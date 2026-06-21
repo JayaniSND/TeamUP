@@ -80,11 +80,11 @@ export default function AssistantPage() {
           </div>
 
           <main className="flex min-h-0 flex-1 flex-col px-3 py-4 sm:px-5 lg:px-6 lg:py-6">
-            <div className="mx-auto grid min-h-0 w-full max-w-[1400px] flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.78fr)] xl:grid-rows-[auto_minmax(0,1fr)]">
+            <div className="mx-auto grid min-h-0 w-full max-w-[1400px] flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.78fr)] lg:grid-rows-[auto_minmax(0,1fr)]">
               {/* LEFT — chat column (stacks first on smaller screens) */}
-              <div className="flex min-w-0 flex-col xl:contents">
+              <div className="flex min-w-0 flex-col lg:contents">
               {/* header */}
-              <header className="fade-up mb-4 flex shrink-0 flex-wrap items-start justify-between gap-3 xl:col-start-1 xl:row-start-1 xl:mb-0">
+              <header className="fade-up mb-4 flex shrink-0 flex-wrap items-start justify-between gap-3 lg:col-start-1 lg:row-start-1 lg:mb-0">
                 <div className="flex items-center gap-3">
                   <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-ai/20 to-accent/20 text-ai ring-1 ring-ai/30">
                     <Bot className="size-5.5" strokeWidth={1.9} />
@@ -110,7 +110,7 @@ export default function AssistantPage() {
               </header>
 
               {/* chat card — fills remaining height; thread scrolls, composer sticks */}
-              <section className="glass-card fade-up flex h-[68vh] min-h-0 w-full flex-col rounded-[1.65rem] p-3 sm:p-4 xl:col-start-1 xl:row-start-2 xl:h-auto xl:flex-1">
+              <section className="glass-card fade-up flex h-[68vh] min-h-0 w-full flex-col rounded-[1.65rem] p-3 sm:p-4 lg:col-start-1 lg:row-start-2 lg:h-auto lg:flex-1">
                 {isEmpty ? (
                   <div className="scroll-thin flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-2 py-6 text-center">
                     <span className="grid size-14 place-items-center rounded-3xl bg-gradient-to-br from-ai/15 to-accent/15 text-ai ring-1 ring-ai/25">
@@ -168,7 +168,7 @@ export default function AssistantPage() {
               </div>
 
               {/* RIGHT — live agent system panel */}
-              <div className="box-border flex min-w-0 flex-col xl:col-start-2 xl:row-start-2 xl:min-h-0">
+              <div className="box-border flex min-w-0 flex-col lg:col-start-2 lg:row-start-2 lg:min-h-0">
                 <LiveAgentPanel />
               </div>
             </div>
