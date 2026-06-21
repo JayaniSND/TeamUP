@@ -112,13 +112,14 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 from datetime import datetime, timedelta, timezone
 
 import anthropic
 import sentry_sdk
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -306,11 +307,100 @@ class ChatIn(BaseModel):
     question: str
 
 
+class CalendarIn(BaseModel):
+    user_id: str
+    title: str
+    event_type: str = "tournament"
+    start_time: str = ""
+    end_time: str = ""
+    location: str = ""
+    source: str = "agent"
+    metadata: dict = {}
+
+
 # ── Core endpoints ─────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ── Photo / voice → text (frontend Upload page) ────────────────────
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic", ".heif", ".tif", ".tiff"}
+TEXT_NOTE_EXTS = {".txt", ".md", ".markdown", ".text"}
+AUDIO_EXTS = {".webm", ".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".oga", ".opus", ".flac", ".aac", ".aiff", ".aif"}
+
+
+@app.post("/convert/photo")
+async def convert_photo(file: UploadFile = File(...)):
+    """Image/note file → extracted text (Claude vision OCR). Returns {"text": ...}."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="No file uploaded, or the file is empty.")
+
+    name = (file.filename or "").lower()
+    ext = os.path.splitext(name)[1]
+    ctype = (file.content_type or "").lower()
+
+    if ctype.startswith("text/") or ext in TEXT_NOTE_EXTS:
+        return {"text": data.decode("utf-8", errors="replace").strip()}
+
+    if not (ctype.startswith("image/") or ext in IMAGE_EXTS):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file type for photo/note upload: "
+                f"{file.content_type or ext or 'unknown'}. Upload an image or a .txt/.md note."
+            ),
+        )
+
+    media_type = ctype if ctype.startswith("image/") else (mimetypes.guess_type(name)[0] or "image/jpeg")
+    from agents.processing.phototext import extract_text_from_image_bytes
+
+    try:
+        text = extract_text_from_image_bytes(data, media_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Image conversion failed: {e}")
+
+    return {"text": text}
+
+
+@app.post("/convert/voice")
+async def convert_voice(file: UploadFile = File(...)):
+    """Audio file/recording → transcript (Deepgram). Returns {"text": ...}."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="No audio uploaded, or the file is empty.")
+
+    name = (file.filename or "").lower()
+    ext = os.path.splitext(name)[1]
+    ctype = (file.content_type or "").lower()
+
+    if not (ctype.startswith("audio/") or ctype.startswith("video/") or ext in AUDIO_EXTS):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported audio type: {file.content_type or ext or 'unknown'}. "
+                "Record audio or upload webm / wav / mp3 / m4a / ogg / flac."
+            ),
+        )
+
+    from agents.processing.voicetotext import transcribe_audio_bytes
+
+    try:
+        text = transcribe_audio_bytes(data, ctype or None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Voice conversion failed: {e}")
+
+    return {"text": text}
 
 
 @app.post("/ingest")
@@ -460,6 +550,13 @@ def create_sponsorship(s: SponsorshipIn):
     res = supabase.table("sponsorship_opportunities").insert(s.model_dump()).execute()
     row = (res.data or [{}])[0]
     return {"opportunity_id": row.get("id")}
+
+
+@app.post("/calendar/add")
+def add_calendar_event(c: CalendarIn):
+    res = supabase.table("calendar_events").insert(c.model_dump()).execute()
+    row = (res.data or [{}])[0]
+    return {"event_id": row.get("id")}
 
 
 # ── Dashboard endpoints ────────────────────────────────────────────
