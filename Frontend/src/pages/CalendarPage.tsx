@@ -12,28 +12,29 @@ import {
   Clock,
   Dumbbell,
   HeartPulse,
+  Hotel,
+  MapPin,
   MessageSquareText,
+  Plane,
   ShieldCheck,
+  Trophy,
   Users,
   type LucideIcon,
 } from "lucide-react";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Button } from "@/components/ui/Button";
 import { athleteData } from "@/data/mockAthleteData";
-import {
-  dateKey,
-  getMockMonthlyEvents,
-  type MonthlyCalendarEvent,
-  type MonthlyCalendarEventCategory,
-} from "@/data/mockCalendarEvents";
+import { dateKey } from "@/data/mockCalendarEvents";
+import { useCalendarEvents } from "@/context/CalendarEventsContext";
 import { cn } from "@/lib/utils";
+import type { SharedCalendarEvent, SharedCalendarEventType } from "@/types/athlete";
 
 const NOOP = () => {};
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const categoryMeta: Record<
-  MonthlyCalendarEventCategory,
+  SharedCalendarEventType,
   {
     label: string;
     icon: LucideIcon;
@@ -83,6 +84,42 @@ const categoryMeta: Record<
     pill: "border-[#2FA084]/20 bg-[#2FA084]/7 text-[#1F6F5F]",
     dot: "bg-[#2FA084]",
   },
+  match: {
+    label: "Match",
+    icon: Trophy,
+    pill: "border-[#1F6F5F]/22 bg-[#1F6F5F]/8 text-[#1F6F5F]",
+    dot: "bg-[#1F6F5F]",
+  },
+  travel: {
+    label: "Travel",
+    icon: Plane,
+    pill: "border-[#2FA084]/22 bg-[#2FA084]/8 text-[#1F6F5F]",
+    dot: "bg-[#2FA084]",
+  },
+  hotel: {
+    label: "Hotel",
+    icon: Hotel,
+    pill: "border-[#6FCF97]/34 bg-[#6FCF97]/14 text-[#1F6F5F]",
+    dot: "bg-[#6FCF97]",
+  },
+  flight: {
+    label: "Flight",
+    icon: Plane,
+    pill: "border-[#2FA084]/22 bg-[#2FA084]/8 text-[#1F6F5F]",
+    dot: "bg-[#2FA084]",
+  },
+  tournament_entry: {
+    label: "Entry",
+    icon: Trophy,
+    pill: "border-[#1F6F5F]/22 bg-[#1F6F5F]/8 text-[#1F6F5F]",
+    dot: "bg-[#1F6F5F]",
+  },
+  booking: {
+    label: "Booking",
+    icon: CalendarCheck2,
+    pill: "border-[#2FA084]/24 bg-[#2FA084]/10 text-[#1F6F5F]",
+    dot: "bg-[#2FA084]",
+  },
 };
 
 const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" });
@@ -114,20 +151,20 @@ function getCalendarDays(viewDate: Date) {
   });
 }
 
-function groupEventsByDate(events: MonthlyCalendarEvent[]) {
-  return events.reduce<Record<string, MonthlyCalendarEvent[]>>((acc, event) => {
-    acc[event.date] = [...(acc[event.date] ?? []), event];
+function groupEventsByDate(events: SharedCalendarEvent[]) {
+  return events.reduce<Record<string, SharedCalendarEvent[]>>((acc, event) => {
+    acc[event.startDate] = [...(acc[event.startDate] ?? []), event];
     return acc;
   }, {});
 }
 
 export default function CalendarPage() {
+  const { events } = useCalendarEvents();
   const today = useMemo(() => startOfDay(new Date()), []);
   const [viewDate, setViewDate] = useState(() => startOfMonth(today));
   const [selectedDate, setSelectedDate] = useState(today);
 
-  const monthEvents = useMemo(() => getMockMonthlyEvents(viewDate), [viewDate]);
-  const eventsByDate = useMemo(() => groupEventsByDate(monthEvents), [monthEvents]);
+  const eventsByDate = useMemo(() => groupEventsByDate(events), [events]);
   const calendarDays = useMemo(() => getCalendarDays(viewDate), [viewDate]);
   const selectedEvents = eventsByDate[dateKey(selectedDate)] ?? [];
 
@@ -156,7 +193,7 @@ export default function CalendarPage() {
         <div className="min-w-0 flex-1">
           <div className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-white/85 px-4 py-2.5 backdrop-blur-md lg:hidden">
             <Link
-              to="/"
+              to="/dashboard"
               className="glass-chip grid size-8 shrink-0 place-items-center rounded-xl text-accent"
               aria-label="Back to dashboard"
             >
@@ -179,7 +216,7 @@ export default function CalendarPage() {
                     </p>
                   </div>
                 </div>
-                <Link to="/" className="hidden lg:block">
+                <Link to="/dashboard" className="hidden lg:block">
                   <Button variant="outline" size="sm">
                     <ArrowLeft className="size-4" strokeWidth={1.9} />
                     Dashboard
@@ -275,7 +312,7 @@ export default function CalendarPage() {
                                     key={event.id}
                                     className={cn(
                                       "calendar-event-pill flex h-[14px] max-w-full shrink-0 items-center truncate rounded-full border px-1.5 text-[9px] font-semibold leading-none",
-                                      categoryMeta[event.category].pill
+                                      categoryMeta[event.type].pill
                                     )}
                                   >
                                     {event.title}
@@ -324,8 +361,13 @@ export default function CalendarPage() {
                     {selectedEvents.length ? (
                       <div className="flex flex-col gap-2">
                         {selectedEvents.map((event) => {
-                          const meta = categoryMeta[event.category];
+                          const meta = categoryMeta[event.type];
                           const Icon = meta.icon;
+                          const time = event.endTime ? `${event.startTime} - ${event.endTime}` : event.startTime;
+                          const dateRange =
+                            event.endDate && event.endDate !== event.startDate
+                              ? `${event.startDate} - ${event.endDate}`
+                              : null;
 
                           return (
                             <div key={event.id} className="glass-inset rounded-2xl p-3">
@@ -337,8 +379,22 @@ export default function CalendarPage() {
                                   <h3 className="truncate text-sm font-semibold text-text">{event.title}</h3>
                                   <div className="mt-1 flex items-center gap-1.5 text-[11px] text-text-dim">
                                     <Clock className="size-3.5" strokeWidth={1.8} />
-                                    <span className="tnum">{event.time}</span>
+                                    <span className="tnum">{time}</span>
                                   </div>
+                                  {dateRange && (
+                                    <div className="mt-1 tnum text-[11px] text-text-dim">{dateRange}</div>
+                                  )}
+                                  {event.location && (
+                                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-text-dim">
+                                      <MapPin className="size-3.5" strokeWidth={1.8} />
+                                      <span className="truncate">{event.location}</span>
+                                    </div>
+                                  )}
+                                  {event.provider && (
+                                    <div className="mt-1 truncate text-[11px] font-medium text-text-dim">
+                                      {event.provider}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                               <div className="flex flex-wrap items-center gap-1.5">

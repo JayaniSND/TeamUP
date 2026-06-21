@@ -26,7 +26,10 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
+import ssl
 from typing import Optional
+from urllib.parse import urlparse
 
 import numpy as np
 
@@ -37,10 +40,13 @@ DIM: int = 384            # all-MiniLM-L6-v2 output dimension
 INDEX_NAME: str = "entries_idx"
 CACHE_INDEX_NAME: str = "chat_cache_idx"
 CACHE_THRESHOLD: float = 0.15   # cosine distance below this = cache hit
+REDIS_CONNECT_TIMEOUT: float = float(os.environ.get("REDIS_CONNECT_TIMEOUT", "3"))
+REDIS_SOCKET_TIMEOUT: float = float(os.environ.get("REDIS_SOCKET_TIMEOUT", "3"))
 
 _model = None          # sentence-transformer, loaded lazily on first embed call
 _index = None          # RedisVL SearchIndex for journal entries
 _cache_index = None    # RedisVL SearchIndex for LangCache
+_redis_unreachable = False
 
 
 # ── Embedding ──────────────────────────────────────────────────────
@@ -58,12 +64,39 @@ def embed(text: str) -> list[float]:
 
 # ── RedisVL index setup ────────────────────────────────────────────
 
+def _redis_reachable() -> bool:
+    """Cheap guard before RedisVL initializes. Some stale TLS Redis URLs can hang
+    inside RedisVL/redis-py handshakes; this keeps chat on the Supabase fallback."""
+    global _redis_unreachable
+    if _redis_unreachable:
+        return False
+    if not REDIS_URL:
+        return False
+
+    try:
+        parsed = urlparse(REDIS_URL)
+        host = parsed.hostname
+        port = parsed.port or (6380 if parsed.scheme == "rediss" else 6379)
+        if not host:
+            return False
+        with socket.create_connection((host, port), timeout=REDIS_CONNECT_TIMEOUT) as sock:
+            sock.settimeout(REDIS_SOCKET_TIMEOUT)
+            if parsed.scheme == "rediss":
+                context = ssl.create_default_context()
+                with context.wrap_socket(sock, server_hostname=host):
+                    return True
+            return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("Redis unreachable; RAG will use recency fallback: %s", e)
+        _redis_unreachable = True
+        return False
+
 def _entry_index():
     """Return (and lazily create) the journal-entries vector index."""
     global _index
     if _index is not None:
         return _index
-    if not REDIS_URL:
+    if not _redis_reachable():
         return None
 
     try:
@@ -92,7 +125,12 @@ def _entry_index():
                 },
             ],
         }
-        idx = SearchIndex.from_dict(schema, redis_url=REDIS_URL)
+        idx = SearchIndex.from_dict(
+            schema,
+            redis_url=REDIS_URL,
+            socket_connect_timeout=REDIS_CONNECT_TIMEOUT,
+            socket_timeout=REDIS_SOCKET_TIMEOUT,
+        )
         idx.create(overwrite=False)
         _index = idx
         log.info("RedisVL entries index ready (%s)", INDEX_NAME)
@@ -108,7 +146,7 @@ def _cache_idx():
     global _cache_index
     if _cache_index is not None:
         return _cache_index
-    if not REDIS_URL:
+    if not _redis_reachable():
         return None
 
     try:
@@ -136,7 +174,12 @@ def _cache_idx():
                 },
             ],
         }
-        idx = SearchIndex.from_dict(schema, redis_url=REDIS_URL)
+        idx = SearchIndex.from_dict(
+            schema,
+            redis_url=REDIS_URL,
+            socket_connect_timeout=REDIS_CONNECT_TIMEOUT,
+            socket_timeout=REDIS_SOCKET_TIMEOUT,
+        )
         idx.create(overwrite=False)
         _cache_index = idx
         log.info("RedisVL cache index ready (%s)", CACHE_INDEX_NAME)

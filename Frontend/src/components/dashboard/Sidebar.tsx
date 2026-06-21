@@ -3,8 +3,6 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   CalendarDays,
-  TrendingUp,
-  HeartPulse,
   Bot,
   Hexagon,
   Settings,
@@ -25,10 +23,8 @@ type NavItem = {
 const NAV: NavItem[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "calendar", label: "Calendar", icon: CalendarDays, to: "/calendar" },
-  { id: "performance", label: "Trend", icon: TrendingUp },
-  { id: "recovery", label: "Recovery", icon: HeartPulse },
   { id: "upload", label: "Upload", icon: UploadCloud, to: "/upload" },
-  { id: "ai", label: "AI Chat", icon: Bot },
+  { id: "ai", label: "AI Chat", icon: Bot, to: "/assistant" },
 ];
 
 /**
@@ -47,7 +43,7 @@ export const Sidebar = memo(function Sidebar({
 }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const onDashboard = pathname === "/";
+  const onDashboard = pathname === "/dashboard";
 
   // Route items navigate; section items scroll the dashboard (jumping back to it
   // first when we're on another page).
@@ -57,7 +53,7 @@ export const Sidebar = memo(function Sidebar({
       return;
     }
     if (onDashboard) onSelect(item.id);
-    else navigate("/", { state: { scrollTo: item.id } });
+    else navigate("/dashboard", { state: { scrollTo: item.id } });
   };
 
   return (

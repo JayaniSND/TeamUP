@@ -116,6 +116,40 @@ export interface CalendarEvent {
   kind: "match" | "tournament" | "travel" | "training";
 }
 
+export type SharedCalendarEventType =
+  | "training"
+  | "recovery"
+  | "practice"
+  | "assessment"
+  | "review"
+  | "rest"
+  | "notes"
+  | "match"
+  | "travel"
+  | "hotel"
+  | "flight"
+  | "tournament_entry"
+  | "booking";
+
+export type SharedCalendarEventSource = "initial" | "booking" | "ai-chat" | "backend" | "manual";
+
+export interface SharedCalendarEvent {
+  id: string;
+  title: string;
+  startDate: string; // YYYY-MM-DD
+  startTime: string; // e.g. "9:00 AM" or "TBD"
+  endDate?: string;
+  endTime?: string;
+  type: SharedCalendarEventType;
+  location?: string;
+  source: SharedCalendarEventSource;
+  notes?: string;
+  status?: string;
+  bookingType?: string;
+  paymentStatus?: string;
+  provider?: string;
+}
+
 /** What a single block on the weekly calendar represents. */
 export type CalendarSlotKind = "training" | "match" | "recovery" | "travel" | "tournament";
 
@@ -178,6 +212,29 @@ export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   sources?: string[];
+  /** specialist agents the orchestrator used for this reply (e.g. ["recovery"]). */
+  agents?: string[];
+  /** tappable follow-up prompts suggested by the orchestrator. */
+  actions?: string[];
+  /** marks an error reply so the bubble can be styled distinctly. */
+  isError?: boolean;
+  /** bookable travel options rendered as Book & Pay cards. */
+  options?: BookingOption[];
+}
+
+/** A bookable travel option (mirrors lib/api.BookingOption). */
+export interface BookingOption {
+  kind: string;
+  title: string;
+  location?: string;
+  amountCents: number;
+  currency: string;
+  description?: string;
+  startDate?: string;
+  startTime?: string;
+  endDate?: string;
+  endTime?: string;
+  provider?: string;
 }
 
 export interface AthleteData {

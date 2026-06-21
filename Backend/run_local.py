@@ -7,7 +7,9 @@ work on your machine before you wire up mailboxes.
 
 Prereqs:
     1. ANTHROPIC_API_KEY set (see .env).
-    2. Mock backend running:  uvicorn mock_backend:app   (separate terminal)
+    2. Backend running:  uvicorn main:app --port 8000   (separate terminal)
+       (or `uvicorn mock_backend:app` for an offline, no-Supabase fallback —
+        but that one lacks the /orchestrator/chat + /bookings routes)
 
 Run (from Backend/):
     python run_local.py

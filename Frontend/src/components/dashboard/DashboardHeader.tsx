@@ -1,14 +1,18 @@
 import { memo } from "react";
-import { Mic, Sparkles, Bell } from "lucide-react";
+import { Home, Mic, Sparkles, Bell } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import type { AthleteProfile } from "@/types/athlete";
 
 export const DashboardHeader = memo(function DashboardHeader({
   profile,
   onAskAI,
+  onVoiceUpload,
+  onLanding,
 }: {
   profile: AthleteProfile;
   onAskAI: () => void;
+  onVoiceUpload: () => void;
+  onLanding: () => void;
 }) {
   return (
     <header className="fade-up flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -36,10 +40,14 @@ export const DashboardHeader = memo(function DashboardHeader({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+        <Button variant="outline" size="sm" onClick={onLanding} className="hidden sm:inline-flex">
+          <Home className="size-4" strokeWidth={1.75} />
+          Landing
+        </Button>
         <Button variant="outline" size="icon" aria-label="Notifications">
           <Bell className="size-4" strokeWidth={1.75} />
         </Button>
-        <Button variant="outline" size="sm" className="hidden sm:inline-flex">
+        <Button variant="outline" size="sm" onClick={onVoiceUpload} className="hidden sm:inline-flex">
           <Mic className="size-4" strokeWidth={1.75} />
           Voice
         </Button>

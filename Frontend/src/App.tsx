@@ -9,16 +9,15 @@ import { RecoveryPanel } from "@/components/dashboard/RecoveryPanel";
 import { WeeklyCalendar } from "@/components/dashboard/WeeklyCalendar";
 import { AgentInsightsStrip } from "@/components/dashboard/AgentInsightsStrip";
 import { AIChatPanel } from "@/components/dashboard/AIChatPanel";
+import { useCalendarEvents } from "@/context/CalendarEventsContext";
 import { cn } from "@/lib/utils";
 import { athleteData } from "@/data/mockAthleteData";
 
 const MOBILE_NAV = [
   ["overview", "Overview"],
   ["calendar", "Calendar"],
-  ["performance", "Load"],
-  ["recovery", "Recovery"],
   ["upload", "Upload"],
-  ["insights", "AI"],
+  ["assistant", "AI"],
 ] as const;
 
 export default function App() {
@@ -27,6 +26,7 @@ export default function App() {
   const [active, setActive] = useState("overview");
   const [chatOpen, setChatOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1440);
   const [seed, setSeed] = useState<{ id: number; text: string; replyId?: string } | null>(null);
+  const { events: calendarEvents } = useCalendarEvents();
   const seqRef = useRef(0);
 
   const data = athleteData;
@@ -40,6 +40,8 @@ export default function App() {
   const closeChat = useCallback(() => setChatOpen(false), []);
   const openChat = useCallback(() => setChatOpen(true), []);
   const openCalendar = useCallback(() => navigate("/calendar"), [navigate]);
+  const openVoiceUpload = useCallback(() => navigate("/upload/voice"), [navigate]);
+  const openLanding = useCallback(() => navigate("/"), [navigate]);
 
   const h = useMemo(
     () => ({
@@ -61,6 +63,10 @@ export default function App() {
       }
       if (id === "upload") {
         navigate("/upload");
+        return;
+      }
+      if (id === "assistant") {
+        navigate("/assistant");
         return;
       }
       setActive(id);
@@ -112,7 +118,12 @@ export default function App() {
 
           <main className="px-3 py-3 sm:px-4 lg:h-full lg:overflow-hidden lg:px-4 xl:px-5">
             <div className="mx-auto flex h-full max-w-[1280px] flex-col">
-              <DashboardHeader profile={data.profile} onAskAI={h.overview} />
+              <DashboardHeader
+                profile={data.profile}
+                onAskAI={h.overview}
+                onVoiceUpload={openVoiceUpload}
+                onLanding={openLanding}
+              />
 
               <div
                 className={cn(
@@ -132,7 +143,7 @@ export default function App() {
 
                   {/* Center band — the Weekly Calendar is the focus and grows to fill */}
                   <div className="min-h-[280px] xl:col-span-12 xl:min-h-0">
-                    <WeeklyCalendar calendar={data.weeklyCalendar} onOpenCalendar={openCalendar} />
+                    <WeeklyCalendar events={calendarEvents} onOpenCalendar={openCalendar} />
                   </div>
 
                   {/* Bottom band — Performance + Recovery, secondary */}

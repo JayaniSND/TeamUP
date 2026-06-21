@@ -130,13 +130,24 @@ import rag  # noqa: E402 — after load_dotenv so REDIS_URL is available
 log = logging.getLogger("main")
 
 # ── Sentry (optional — only init if DSN is present) ────────────────
+# Integrations are best-effort: a missing optional dep (e.g. SQLAlchemy, which
+# this project doesn't use — it talks to Supabase over REST) must NOT crash the
+# whole API on import. Each integration is loaded defensively and skipped if its
+# backing package isn't installed.
 _sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
 if _sentry_dsn:
-    from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+    _sentry_integrations = []
+    for _import_integration in (
+        lambda: __import__("sentry_sdk.integrations.fastapi", fromlist=["FastApiIntegration"]).FastApiIntegration(),
+        lambda: __import__("sentry_sdk.integrations.sqlalchemy", fromlist=["SqlalchemyIntegration"]).SqlalchemyIntegration(),
+    ):
+        try:
+            _sentry_integrations.append(_import_integration())
+        except Exception as _e:  # noqa: BLE001 — optional integration, skip if unavailable
+            log.warning("sentry integration skipped: %s", _e)
     sentry_sdk.init(
         dsn=_sentry_dsn,
-        integrations=[FastApiIntegration()],
+        integrations=_sentry_integrations,
         traces_sample_rate=1.0,
         environment="hackathon",
         release="baseline@1.0.0",
@@ -144,6 +155,9 @@ if _sentry_dsn:
 
 # ── Supabase client ────────────────────────────────────────────────
 from database import supabase  # noqa: E402  (after load_dotenv)
+
+# ── Service layer (Supabase data access + HTTP Orchestrator brain) ──
+from services import athlete_context, booking_service, orchestrator_service  # noqa: E402
 
 app = FastAPI(title="BASELINE real backend (Supabase)")
 
@@ -305,6 +319,38 @@ class IngestIn(BaseModel):
 class ChatIn(BaseModel):
     user_id: str
     question: str
+
+
+class OrchestratorChatIn(BaseModel):
+    """Single chat request from the frontend. The frontend sends only the raw
+    message + identity/context — it never selects an agent."""
+    user_id: str = DEMO_USER_ID
+    message: str
+    session_id: str | None = None
+    context: dict = {}  # optional frontend hints (e.g. {"page": "/dashboard"})
+
+
+class BookingOptionIn(BaseModel):
+    kind: str                      # 'flight' | 'hotel' | 'tournament_entry'
+    title: str
+    location: str | None = None
+    amount_cents: int
+    currency: str = "usd"
+    description: str | None = None
+    start_date: str | None = None
+    start_time: str | None = None
+    end_date: str | None = None
+    end_time: str | None = None
+    provider: str | None = None
+
+
+class CheckoutIn(BaseModel):
+    user_id: str = DEMO_USER_ID
+    option: BookingOptionIn
+
+
+class ConfirmBookingIn(BaseModel):
+    session_id: str
 
 
 class CalendarIn(BaseModel):
@@ -510,18 +556,9 @@ def list_recovery(user_id: str, limit: int = 20):
 
 @app.get("/athlete_profile")
 def get_profile(user_id: str):
-    return {
-        "user_id": user_id,
-        "name": "Demo Athlete",
-        "sport": "Tennis",
-        "level": "College",
-        "location": "San Jose, CA",
-        "dominant_side": "right",
-        "goals": ["Win a regional open", "Improve serve consistency"],
-        "strengths": ["Forehand", "Court coverage"],
-        "weaknesses": ["Second serve", "Net play"],
-        "injury_history": ["Right knee tendinitis (2025)"],
-    }
+    """Real profile from Supabase if an `athlete_profiles` table exists, else an
+    honest placeholder (no fabricated identity). See athlete_context.get_athlete_profile."""
+    return athlete_context.get_athlete_profile(user_id)
 
 
 @app.post("/agent_outputs")
@@ -638,53 +675,51 @@ def dashboard_sponsorship(user_id: str):
 
 @app.post("/chat")
 def chat(body: ChatIn):
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-
-    # Step 1 — LangCache check
-    cached = rag.cache_get(body.question, body.user_id)
-    if cached:
-        return {"answer": cached, "sources": [], "cache_hit": True}
-
-    # Step 2 — Retrieve: try KNN first, fall back to recency
-    rag_entries = rag.retrieve(body.question, body.user_id, top_k=8)
-    if rag_entries:
-        entries = rag_entries  # each dict has entry_id, section, text, score
-    else:
-        rows = _query("entries", body.user_id, 15)
-        entries = [_norm_entry(r) for r in rows]
-
-    if not entries:
-        return {"answer": "I don't have any journal entries for you yet.", "sources": [], "cache_hit": False}
-
-    if not api_key:
-        joined = "; ".join(e["text"] for e in entries[:5])
-        return {"answer": f"(no ANTHROPIC_API_KEY set) Recent entries: {joined}",
-                "sources": [e.get("entry_id") for e in entries[:5]], "cache_hit": False}
-
-    # Step 3 — Generate
-    context = "\n\n".join(f"[{e['section'].upper()}]\n{e['text']}" for e in entries)
-    prompt = (
-        "You are a sports performance analyst reviewing an athlete's journal. "
-        "Answer using ONLY the entries below. Be specific — quote what they wrote. "
-        "If the entries lack enough information, say so.\n\n"
-        f"JOURNAL ENTRIES:\n{context}\n\nQUESTION: {body.question}"
-    )
+    """Standalone RAG Q&A (the orchestrator's 'ask' path). Shares one
+    implementation with the orchestrator so both stay in sync."""
     with sentry_sdk.start_span(op="ai.inference", description="Claude chat") if sentry_sdk.is_initialized() else _noop():
-        resp = anthropic.Anthropic().messages.create(
-            model=os.environ.get("SYNTHESIS_MODEL", "claude-sonnet-4-6"),
-            max_tokens=800,
-            messages=[{"role": "user", "content": prompt}],
-        )
-    answer = next((b.text for b in resp.content if b.type == "text"), "")
+        return orchestrator_service.answer_question(body.user_id, body.question)
 
-    # Step 4 — Cache
-    rag.cache_set(body.question, body.user_id, answer)
 
-    return {
-        "answer": answer,
-        "sources": [e.get("entry_id") for e in entries],
-        "cache_hit": False,
-    }
+# ── /orchestrator/chat : the frontend's single AI entry point ──────
+# The frontend sends EVERY chat message here with only { user_id, message,
+# session_id?, context? }. The orchestrator loads the athlete's real Supabase
+# context, classifies intent, and routes to the right specialist analysis
+# function — the frontend never chooses an agent. Returns a structured reply:
+#   { message, intent, agents_used, athlete_context_summary, warnings,
+#     suggested_actions, sources }
+
+@app.post("/orchestrator/chat")
+async def orchestrator_chat(body: OrchestratorChatIn):
+    if not body.message or not body.message.strip():
+        raise HTTPException(status_code=400, detail="`message` is required.")
+    return await orchestrator_service.run_orchestrator(
+        user_id=body.user_id,
+        message=body.message,
+        session_id=body.session_id,
+        context=body.context,
+    )
+
+
+# ── Travel booking → Stripe Checkout (test mode) ───────────────────
+# The chat surfaces representative options; the athlete clicks Book & Pay, pays
+# on Stripe's hosted test page (no real charge), and returns to confirm.
+
+@app.post("/bookings/checkout")
+def bookings_checkout(body: CheckoutIn):
+    """Record a pending booking and open a Stripe test Checkout Session."""
+    return booking_service.create_checkout_session(body.user_id, body.option.model_dump())
+
+
+@app.post("/bookings/confirm")
+def bookings_confirm(body: ConfirmBookingIn):
+    """Verify a returned Checkout Session and mark the booking paid."""
+    return booking_service.confirm_checkout(body.session_id)
+
+
+@app.get("/bookings")
+def list_bookings(user_id: str = DEMO_USER_ID):
+    return {"bookings": booking_service.list_bookings(user_id)}
 
 
 # ── Demo seed endpoint ─────────────────────────────────────────────

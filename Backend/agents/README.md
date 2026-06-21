@@ -83,8 +83,10 @@ cp .env.example .env          # then fill in ANTHROPIC_API_KEY
 ## Run it locally (offline, one command)
 
 ```bash
-# terminal 1 — the data backend stand-in (seeded athlete history)
-uvicorn mock_backend:app
+# terminal 1 — the real backend (Supabase + the /orchestrator/chat and
+# /bookings routes the frontend chat needs). Seed demo data with POST /admin/seed.
+uvicorn main:app --port 8000
+# offline fallback with no Supabase: `uvicorn mock_backend:app` (no chat/booking routes)
 
 # terminal 2 — all agents + a test user, in one process
 python run_local.py

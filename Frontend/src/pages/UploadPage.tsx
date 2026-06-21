@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   AlertCircle,
   ArrowLeft,
@@ -31,13 +31,25 @@ const METHODS: { id: Method; label: string; icon: typeof Mic; desc: string }[] =
   { id: "text", label: "Text", icon: PenLine, desc: "Type or paste" },
 ];
 
+const methodFromLocation = (pathname: string, search: string): Method => {
+  const requested = new URLSearchParams(search).get("method");
+  if (pathname.endsWith("/voice") || requested === "voice") return "voice";
+  if (requested === "text") return "text";
+  return "photo";
+};
+
 // Sidebar is shared with the dashboard; section clicks self-navigate via the
 // router, so its onSelect is a no-op here. Module-level keeps the identity
 // stable for the memoized Sidebar.
 const NOOP = () => {};
 
 export default function UploadPage() {
-  const [method, setMethod] = useState<Method>("photo");
+  const location = useLocation();
+  const routeMethod = useMemo(
+    () => methodFromLocation(location.pathname, location.search),
+    [location.pathname, location.search]
+  );
+  const [method, setMethod] = useState<Method>(routeMethod);
   const [result, setResult] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
@@ -45,6 +57,10 @@ export default function UploadPage() {
   const [copied, setCopied] = useState(false);
 
   const busy = status === "loading";
+
+  useEffect(() => {
+    setMethod(routeMethod);
+  }, [routeMethod]);
 
   const runConvert = useCallback(async (fn: () => Promise<string>, label: string) => {
     setStatus("loading");
@@ -110,7 +126,7 @@ export default function UploadPage() {
           {/* mobile top bar (sidebar is hidden < lg) */}
           <div className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-white/85 px-4 py-2.5 backdrop-blur-md lg:hidden">
             <Link
-              to="/"
+              to="/dashboard"
               className="glass-chip grid size-8 shrink-0 place-items-center rounded-xl text-accent"
               aria-label="Back to dashboard"
             >
@@ -132,7 +148,7 @@ export default function UploadPage() {
                     <p className="mt-0.5 text-sm text-text-muted">Add training notes by photo, voice, or text.</p>
                   </div>
                 </div>
-                <Link to="/" className="hidden lg:block">
+                <Link to="/dashboard" className="hidden lg:block">
                   <Button variant="outline" size="sm">
                     <ArrowLeft className="size-4" strokeWidth={1.9} />
                     Dashboard

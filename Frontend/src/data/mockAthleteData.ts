@@ -356,45 +356,5 @@ export const athleteData: AthleteData = {
   ],
 };
 
-/**
- * Canned assistant replies keyed by prompt id, so the chat feels connected to
- * the dashboard without a backend. Swap for `/chat` responses later.
- */
-export const cannedReplies: Record<string, { text: string; sources?: string[] }> = {
-  p1: {
-    text: "Next week, protect the right knee while keeping serve sharp. Cap total load near 240 min, move one high-intensity block to technical serve work, and bank a recovery day before the San Jose Open. Recovery flagged a rising soreness pattern, so prioritize quality over volume.",
-    sources: ["injury_log", "training", "metrics"],
-  },
-  p2: {
-    text: "Your last 5 are 3W/2L. Both losses (Novak, Ferreira) turned on second-serve return games, and the Novak match faded in a third set as the knee tightened. It reads as a stamina + return-consistency issue rather than a form drop.",
-    sources: ["performance", "injury_log"],
-  },
-  p3: {
-    text: "Recovery risk is medium. Weekly load is up 18% vs. your 4-week average and recovery score dropped from 78 to 55, while right-knee soreness was logged after 3 of the last 4 sessions. That's a rising pattern, not overtraining yet. Suggested adjustment: one lighter day and a recovery block this week.",
-    sources: ["metrics", "injury_log"],
-  },
-  p4: {
-    text: "Drafted a pitch to Baseline Athletics tying your rising-ITF-singles storyline to their athlete program, with your recent 3W/2L run and San Jose Open appearance as proof points. It's saved as a draft for your review — nothing is sent until you approve.",
-    sources: ["sponsorship", "performance"],
-  },
-  p5: {
-    text: "Last 7 days: 4 sessions / 290 min, skewing high-to-peak intensity — heavy on serve and baseline work, light on recovery. Serve consistency and footwork improved; the conditioning blocks line up with the right-knee soreness spikes. One win logged (Alvarez, 6-4 7-5).",
-    sources: ["training", "coaching"],
-  },
-  p6: {
-    text: "The trend: training load climbed into the high zone while recovery slid from 78 to 55 across the week. Match performance held up (peaked Saturday at 82) and first-serve % is up 58→67%. Net read — form is improving but you're spending recovery to get it. Ease the load to keep the serve gains.",
-    sources: ["performance", "metrics"],
-  },
-  p7: {
-    text: "For the San Jose Open (12 days out): restring 3 rackets this week, pack your knee support + recovery kit, and book a mobility session the day before R1. I'd hold a lighter travel-week training block so you arrive fresh. Nothing's added to your calendar until you confirm.",
-    sources: ["logistics", "training"],
-  },
-  p8: {
-    text: "Your next confirmed event is the San Jose Open (hard court, 12 days out). Two more fit your level and surface in the following six weeks — the Sacramento Challenger and the Stockton ITF. Want me to pencil them in and check travel?",
-    sources: ["logistics", "performance"],
-  },
-  p9: {
-    text: "Here's a lighter week that protects the knee: 2 technical serve sessions, 1 recovery/mobility day, 1 match-play block — about 230 min total (down from 290). Friday's peak conditioning becomes serve-precision work. Want this on your calendar?",
-    sources: ["training", "injury_log", "metrics"],
-  },
-};
+// NOTE: the old `cannedReplies` mock was removed — the AI chat now calls the
+// real orchestrator (POST /orchestrator/chat). See Frontend/src/lib/api.ts.
