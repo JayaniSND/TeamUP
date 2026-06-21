@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Bot, Hexagon } from "lucide-react";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
@@ -16,10 +17,13 @@ const MOBILE_NAV = [
   ["calendar", "Calendar"],
   ["performance", "Load"],
   ["recovery", "Recovery"],
+  ["upload", "Upload"],
   ["insights", "AI"],
 ] as const;
 
 export default function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [active, setActive] = useState("overview");
   const [chatOpen, setChatOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1440);
   const [seed, setSeed] = useState<{ id: number; text: string; replyId?: string } | null>(null);
@@ -49,13 +53,29 @@ export default function App() {
 
   const recoveryInsight = useMemo(() => data.insights.find((i) => i.agent === "Recovery"), [data.insights]);
 
-  const onSelect = useCallback((id: string) => {
-    setActive(id);
-    if (id === "ai") {
-      setChatOpen(true);
-      return;
-    }
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const onSelect = useCallback(
+    (id: string) => {
+      if (id === "upload") {
+        navigate("/upload");
+        return;
+      }
+      setActive(id);
+      if (id === "ai") {
+        setChatOpen(true);
+        return;
+      }
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+    [navigate]
+  );
+
+  // Arriving from another page (e.g. the Upload page) via a sidebar section:
+  // honor the requested target once the dashboard has mounted.
+  useEffect(() => {
+    const target = (location.state as { scrollTo?: string } | null)?.scrollTo;
+    if (target) requestAnimationFrame(() => onSelect(target));
+    // run once on mount; location.state is read at arrival time
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
