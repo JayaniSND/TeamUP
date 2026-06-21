@@ -28,6 +28,7 @@ import os
 from datetime import date, datetime, timedelta
 
 from database import supabase
+from services import agent_event_tracker as tracker
 
 log = logging.getLogger("booking_service")
 
@@ -45,6 +46,7 @@ _HOTEL_NIGHTLY_CENTS = 12900
 _HOTEL_NIGHTS = 3
 _FLIGHT_CENTS = 24500
 _ENTRY_CENTS = 6500
+_SERVICE_FEE_CENTS = 0
 
 _KINDS = ("hotel", "flight", "tournament_entry")
 
@@ -168,6 +170,8 @@ def representative_options(ctx: dict, kinds: list[str] | None = None) -> list[di
             "location": location,
             "amount_cents": _FLIGHT_CENTS,
             "currency": "usd",
+            "route": f"Home airport to {location}",
+            "airline": "SportsMom Air",
             "description": (
                 f"Depart {travel_date.isoformat()} and return {return_date.isoformat()} for {event}."
                 if travel_date and return_date
@@ -177,7 +181,7 @@ def representative_options(ctx: dict, kinds: list[str] | None = None) -> list[di
             "start_time": "8:00 AM" if travel_date else None,
             "end_date": travel_date.isoformat() if travel_date else None,
             "end_time": "11:00 AM" if travel_date else None,
-            "provider": "TeamUP Travel",
+            "provider": "SportsMom Travel",
         })
     if "hotel" in kinds:
         options.append({
@@ -195,7 +199,7 @@ def representative_options(ctx: dict, kinds: list[str] | None = None) -> list[di
             "start_time": "3:00 PM" if travel_date else None,
             "end_date": return_date.isoformat() if return_date else None,
             "end_time": "11:00 AM" if return_date else None,
-            "provider": "TeamUP Hotel",
+            "provider": "SportsMom Hotel",
         })
     if "tournament_entry" in kinds:
         options.append({
@@ -214,9 +218,57 @@ def representative_options(ctx: dict, kinds: list[str] | None = None) -> list[di
     return options
 
 
+def representative_fee_summary(ctx: dict) -> dict:
+    """Current fee-only summary. No travel searches are needed for this path."""
+    option = representative_options(ctx, ["tournament_entry"])[0]
+    base_price = int(option.get("amount_cents") or _ENTRY_CENTS)
+    service_fee = _SERVICE_FEE_CENTS
+    return {
+        "base_price_cents": base_price,
+        "service_fee_cents": service_fee,
+        "total_cents": base_price + service_fee,
+        "currency": option.get("currency") or "usd",
+    }
+
+
 # ── Stripe Checkout (test mode) ─────────────────────────────────────────────
 
-def create_checkout_session(user_id: str, option: dict) -> dict:
+def _with_trace(response: dict, tr: tracker.AgentEventTracker) -> dict:
+    response["agent_trace"] = tr.get_trace()
+    response["agentTrace"] = response["agent_trace"]
+    response["flowId"] = tr.flow_id
+    response["messageId"] = tr.message_id
+    return response
+
+
+def create_checkout_session(
+    user_id: str,
+    option: dict,
+    flow_id: str | None = None,
+    message_id: str | None = None,
+) -> dict:
+    tr = tracker.start_flow(user_id, message_id=message_id, flow_id=flow_id)
+    tracker.request_received("Payment session requested")
+    tracker.payment_session_started("Payment session creation started")
+    try:
+        response = tracker.track_agent_call_sync(
+            from_agent="logistics",
+            to_agent="payment",
+            step="Creating Stripe checkout session",
+            call=lambda: _create_checkout_session(user_id, option),
+            bookingKind=str(option.get("kind") or "booking"),
+        )
+        tracker.payment_session_completed(
+            "Payment session creation completed",
+            ok=bool(response.get("ok")),
+            configured=bool(response.get("configured", True)),
+        )
+        return _with_trace(response, tr)
+    finally:
+        tracker.clear_flow(tr)
+
+
+def _create_checkout_session(user_id: str, option: dict) -> dict:
     """Record a pending booking and open a Stripe test Checkout Session.
     Returns {ok, checkout_url, booking_id, session_id} or a clear error."""
     amount = int(option.get("amount_cents") or 0)
@@ -279,31 +331,62 @@ def create_checkout_session(user_id: str, option: dict) -> dict:
 
 def confirm_checkout(session_id: str) -> dict:
     """Verify a returned Checkout Session with Stripe and mark the booking paid."""
+    tr = tracker.start_flow("demo-athlete", session_id=session_id)
+    tracker.request_received("Payment return received")
     if not stripe_configured():
-        return {"ok": False, "configured": False, "error": "Stripe is not configured."}
-    stripe.api_key = STRIPE_SECRET_KEY
+        tracker.agent_error("payment", "Stripe is not configured")
+        tracker.final_response_started("Preparing payment status")
+        tracker.final_response("Payment verification response sent")
+        response = _with_trace({"ok": False, "configured": False, "error": "Stripe is not configured."}, tr)
+        tracker.clear_flow(tr)
+        return response
     try:
-        session = stripe.checkout.Session.retrieve(session_id)
-    except Exception as e:  # noqa: BLE001
-        log.warning("stripe session retrieve failed: %s", e)
-        return {"ok": False, "error": f"Could not verify payment: {e}"}
+        stripe.api_key = STRIPE_SECRET_KEY
+        try:
+            session = tracker.track_agent_call_sync(
+                from_agent="orchestrator",
+                to_agent="payment",
+                step="Verifying Stripe payment",
+                call=lambda: stripe.checkout.Session.retrieve(session_id),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("stripe session retrieve failed: %s", e)
+            tracker.final_response_started("Preparing payment status")
+            tracker.final_response("Payment verification response sent")
+            return _with_trace({
+                "ok": False,
+                "error": f"Could not verify payment: {e}",
+            }, tr)
 
-    payment_status = getattr(session, "payment_status", None) or session.get("payment_status")
-    paid = payment_status == "paid"
-    metadata = getattr(session, "metadata", None) or session.get("metadata") or {}
-    booking_id = metadata.get("booking_id")
-    if booking_id:
-        _update_booking(booking_id, {"status": "paid" if paid else "pending_payment"})
-    booking = _get_booking(booking_id) if booking_id else None
-    calendar_event = _booking_to_calendar_event(booking) if paid and booking else None
-    return {
-        "ok": True,
-        "paid": paid,
-        "status": payment_status,
-        "booking_id": booking_id,
-        "booking": booking,
-        "calendar_event": calendar_event,
-    }
+        payment_status = getattr(session, "payment_status", None) or session.get("payment_status")
+        paid = payment_status == "paid"
+        metadata = getattr(session, "metadata", None) or session.get("metadata") or {}
+        booking_id = metadata.get("booking_id")
+        tracker.payment_verified("Payment success verified" if paid else "Payment not completed", paid=paid)
+        if booking_id:
+            _update_booking(booking_id, {"status": "paid" if paid else "pending_payment"})
+        booking = _get_booking(booking_id) if booking_id else None
+        calendar_event = None
+        if paid and booking:
+            calendar_event = tracker.track_agent_call_sync(
+                from_agent="payment",
+                to_agent="calendar",
+                step="Creating calendar event after payment",
+                call=lambda: _booking_to_calendar_event(booking),
+            )
+            tracker.calendar_event_created("Calendar event created after payment")
+        tracker.final_response_started("Preparing payment confirmation")
+        tracker.final_response("Payment confirmation sent")
+        return _with_trace({
+            "ok": True,
+            "paid": paid,
+            "status": payment_status,
+            "booking_id": booking_id,
+            "booking": booking,
+            "calendar_event": calendar_event,
+        }, tr)
+    finally:
+        tracker.clear_flow(tr)
 
 
 def list_bookings(user_id: str, limit: int = 20) -> list[dict]:

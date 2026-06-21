@@ -110,6 +110,7 @@ Tables must exist in Supabase before running. SQL to create them:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import mimetypes
@@ -119,8 +120,9 @@ from datetime import datetime, timedelta, timezone
 import anthropic
 import sentry_sdk
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -158,6 +160,7 @@ from database import supabase  # noqa: E402  (after load_dotenv)
 
 # ── Service layer (Supabase data access + HTTP Orchestrator brain) ──
 from services import athlete_context, booking_service, orchestrator_service  # noqa: E402
+from services import agent_event_tracker  # noqa: E402
 from services.user_identity import resolve_user_id  # noqa: E402
 
 app = FastAPI(title="BASELINE real backend (Supabase)")
@@ -329,6 +332,8 @@ class OrchestratorChatIn(BaseModel):
     user_id: str = DEMO_USER_ID
     message: str
     session_id: str | None = None
+    flow_id: str | None = None
+    message_id: str | None = None
     response_mode: str | None = None
     system_instruction: str | None = None
     context: dict = {}  # optional frontend hints (e.g. {"page": "/dashboard"})
@@ -350,6 +355,8 @@ class BookingOptionIn(BaseModel):
 
 class CheckoutIn(BaseModel):
     user_id: str = DEMO_USER_ID
+    flow_id: str | None = None
+    message_id: str | None = None
     option: BookingOptionIn
 
 
@@ -704,9 +711,51 @@ async def orchestrator_chat(body: OrchestratorChatIn):
         user_id=body.user_id,
         message=body.message,
         session_id=body.session_id,
+        flow_id=body.flow_id,
+        message_id=body.message_id,
         response_mode=body.response_mode,
         system_instruction=body.system_instruction,
         context=body.context,
+    )
+
+
+@app.get("/agent-activity/{flow_id}/stream")
+@app.get("/api/agent-activity/{flow_id}/stream")
+async def agent_activity_stream(flow_id: str, request: Request, message_id: str | None = None):
+    """Server-Sent Events stream for one backend activity flow."""
+    flow = agent_event_tracker.ensure_flow(flow_id, message_id=message_id)
+    queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=128)
+
+    async def events():
+        seen: set[str] = set()
+        flow.subscribe(queue)
+        for item in flow.get_trace():
+            if item.get("eventId"):
+                seen.add(item["eventId"])
+            yield f"event: agent_activity\ndata: {json.dumps(item)}\n\n"
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if item.get("eventId") in seen:
+                    continue
+                if item.get("eventId"):
+                    seen.add(item["eventId"])
+                yield f"event: agent_activity\ndata: {json.dumps(item)}\n\n"
+                if item.get("type") == agent_event_tracker.FINAL_RESPONSE_COMPLETED:
+                    break
+        finally:
+            flow.unsubscribe(queue)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -717,7 +766,12 @@ async def orchestrator_chat(body: OrchestratorChatIn):
 @app.post("/bookings/checkout")
 def bookings_checkout(body: CheckoutIn):
     """Record a pending booking and open a Stripe test Checkout Session."""
-    return booking_service.create_checkout_session(body.user_id, body.option.model_dump())
+    return booking_service.create_checkout_session(
+        body.user_id,
+        body.option.model_dump(),
+        flow_id=body.flow_id,
+        message_id=body.message_id,
+    )
 
 
 @app.post("/bookings/confirm")

@@ -1,4 +1,4 @@
-# Athlete Analytics OS — Frontend
+# SportsMom — Frontend
 
 White / green glassmorphism sports-analytics dashboard for a single athlete. React + TypeScript +
 Vite + Tailwind v4 + Recharts + lucide-react + framer-motion. Mock data only (API-shaped, DB-ready).

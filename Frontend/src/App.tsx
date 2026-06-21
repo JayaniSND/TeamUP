@@ -10,8 +10,10 @@ import { WeeklyCalendar } from "@/components/dashboard/WeeklyCalendar";
 import { AgentInsightsStrip } from "@/components/dashboard/AgentInsightsStrip";
 import { AIChatPanel } from "@/components/dashboard/AIChatPanel";
 import { useCalendarEvents } from "@/context/CalendarEventsContext";
+import { dateKey, parseDateKey } from "@/data/mockCalendarEvents";
 import { cn } from "@/lib/utils";
 import { athleteData } from "@/data/mockAthleteData";
+import type { OverviewMetric, SharedCalendarEvent } from "@/types/athlete";
 
 const MOBILE_NAV = [
   ["overview", "Overview"],
@@ -19,6 +21,52 @@ const MOBILE_NAV = [
   ["upload", "Upload"],
   ["assistant", "AI"],
 ] as const;
+
+const matchDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+
+function startOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function getDaysUntil(date: Date, today: Date) {
+  return Math.max(0, Math.ceil((startOfDay(date).getTime() - startOfDay(today).getTime()) / 86_400_000));
+}
+
+function getNextMatchMetric(metrics: OverviewMetric[], events: SharedCalendarEvent[], today: Date): OverviewMetric[] {
+  const todayKey = dateKey(today);
+  const nextMatch = events
+    .filter((event) => event.type === "match" && event.startDate >= todayKey)
+    .sort((a, b) => `${a.startDate} ${a.startTime}`.localeCompare(`${b.startDate} ${b.startTime}`))[0];
+
+  if (!nextMatch) {
+    return metrics.map((metric) =>
+      metric.id === "event"
+        ? {
+            ...metric,
+            value: "TBD",
+            detail: "No match on calendar",
+            status: "neutral",
+          }
+        : metric
+    );
+  }
+
+  const matchDate = parseDateKey(nextMatch.startDate);
+  const daysUntil = getDaysUntil(matchDate, today);
+  const value = daysUntil === 0 ? "Today" : daysUntil === 1 ? "Tomorrow" : `${daysUntil} days`;
+  const matchMeta = [matchDateFormatter.format(matchDate), nextMatch.location].filter(Boolean).join(" · ");
+
+  return metrics.map((metric) =>
+    metric.id === "event"
+      ? {
+          ...metric,
+          value,
+          detail: `${nextMatch.title}${matchMeta ? ` · ${matchMeta}` : ""}`,
+          status: nextMatch.status === "Confirmed" || nextMatch.paymentStatus === "paid" ? "positive" : "neutral",
+        }
+      : metric
+  );
+}
 
 export default function App() {
   const location = useLocation();
@@ -30,6 +78,11 @@ export default function App() {
   const seqRef = useRef(0);
 
   const data = athleteData;
+  const today = useMemo(() => new Date(), []);
+  const overviewMetrics = useMemo(
+    () => getNextMatchMetric(data.overview, calendarEvents, today),
+    [calendarEvents, data.overview, today]
+  );
 
   const askAI = useCallback((text: string, replyId?: string) => {
     seqRef.current += 1;
@@ -134,7 +187,7 @@ export default function App() {
                 <div className="board-surface grid min-h-0 grid-cols-1 gap-3 rounded-[1.6rem] p-2.5 lg:h-full xl:grid-cols-12 xl:grid-rows-[auto_minmax(0,1fr)_auto]">
                   {/* Top band — high-impact KPIs + next agent action */}
                   <div id="overview" className="scroll-mt-24 xl:col-span-8 lg:scroll-mt-8">
-                    <OverviewCards metrics={data.overview} onCalendarOpen={openCalendar} />
+                    <OverviewCards metrics={overviewMetrics} onCalendarOpen={openCalendar} />
                   </div>
 
                   <div className="xl:col-span-4">

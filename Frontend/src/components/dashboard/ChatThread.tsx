@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Loader2, Send } from "lucide-react";
+import { CheckCircle2, Loader2, Send } from "lucide-react";
+import { bookingOptionKey } from "@/lib/bookingIdentity";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import type { BookingOption, ChatMessage } from "@/types/athlete";
@@ -28,6 +29,7 @@ export function ChatThread({
   onSend,
   onBook,
   bookingBusy,
+  paidBookingKeys,
   variant = "compact",
 }: {
   messages: ChatMessage[];
@@ -35,6 +37,7 @@ export function ChatThread({
   onSend: (text: string) => void;
   onBook: (option: BookingOption) => void;
   bookingBusy: string | null;
+  paidBookingKeys?: Set<string>;
   variant?: Variant;
 }) {
   const full = variant === "full";
@@ -106,35 +109,48 @@ export function ChatThread({
                 full ? "max-w-[88%] sm:max-w-[80%]" : "max-w-[92%]"
               )}
             >
-              {m.options.map((o) => (
-                <div
-                  key={o.title}
-                  className="glass-inset box-border flex max-w-full min-w-0 items-center gap-2 rounded-2xl bg-white/95 p-2 ring-1 ring-line"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className={cn("truncate font-semibold text-text", full ? "text-xs" : "text-[11px]")}>
-                      {o.title}
-                    </div>
-                    {o.description && (
-                      <div className={cn("truncate text-text-dim", full ? "text-[11px]" : "text-[10px]")}>
-                        {o.description}
+              {m.options.map((o) => {
+                const paid = paidBookingKeys?.has(bookingOptionKey(o)) ?? false;
+                return (
+                  <div
+                    key={`${o.kind}-${o.title}-${o.startDate ?? ""}-${o.startTime ?? ""}`}
+                    className={cn(
+                      "glass-inset box-border flex max-w-full min-w-0 items-center gap-2 rounded-2xl bg-white/95 p-2 ring-1",
+                      paid ? "ring-positive/24" : "ring-line"
+                    )}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className={cn("truncate font-semibold text-text", full ? "text-xs" : "text-[11px]")}>
+                        {o.title}
                       </div>
+                      {o.description && (
+                        <div className={cn("truncate text-text-dim", full ? "text-[11px]" : "text-[10px]")}>
+                          {o.description}
+                        </div>
+                      )}
+                    </div>
+                    <div className={cn("tnum shrink-0 font-semibold text-text", full ? "text-xs" : "text-[11px]")}>
+                      {money(o.amountCents, o.currency)}
+                    </div>
+                    {paid ? (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-positive/10 px-2.5 py-1.5 text-[11px] font-semibold text-positive ring-1 ring-positive/18">
+                        <CheckCircle2 className="size-3.5" />
+                        Added
+                      </span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={bookingBusy !== null}
+                        onClick={() => onBook(o)}
+                        className="shrink-0"
+                      >
+                        {bookingBusy === o.title ? <Loader2 className="size-3.5 animate-spin" /> : "Book & Pay"}
+                      </Button>
                     )}
                   </div>
-                  <div className={cn("tnum shrink-0 font-semibold text-text", full ? "text-xs" : "text-[11px]")}>
-                    {money(o.amountCents, o.currency)}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    disabled={bookingBusy !== null}
-                    onClick={() => onBook(o)}
-                    className="shrink-0"
-                  >
-                    {bookingBusy === o.title ? <Loader2 className="size-3.5 animate-spin" /> : "Book & Pay"}
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : null}
 

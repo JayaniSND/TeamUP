@@ -78,6 +78,7 @@ from uagents_core.contrib.protocols.chat import (
 )
 
 from .common import calendar_client, config
+from .common.booking_intent import booking_kinds_for_intent, classify_booking_intent
 from .common.chat import decode_envelope, is_start, make_ack, make_chat, text_of
 
 log = logging.getLogger("logistics")
@@ -330,7 +331,37 @@ async def _run_tournament_leg(ctx: Context, req: dict, location_hint: str | None
 
 # ── Orchestration ────────────────────────────────────────────────────────
 
-async def _kick_off_request(ctx: Context, sender: str, user_id: str, raw_text: str):
+def _legs_for_booking_intent(booking_intent: str) -> set[str]:
+    if booking_intent == "fee_only":
+        return set()
+    kinds = set(booking_kinds_for_intent(booking_intent))
+    legs: set[str] = set()
+    if "flight" in kinds:
+        legs.add("flights")
+    if "hotel" in kinds:
+        legs.add("hotels")
+    if booking_intent == "general":
+        legs.add("tournament")
+    return legs
+
+
+def _compose_fee_summary() -> str:
+    fee_cents = int(round(BOOKING_FEE_USD * 100))
+    return "\n".join([
+        "Fee Summary",
+        "* Base price: $0.00",
+        f"* Service fee: ${fee_cents / 100:.2f}",
+        f"* Total: ${fee_cents / 100:.2f}",
+    ])
+
+
+async def _kick_off_request(
+    ctx: Context,
+    sender: str,
+    user_id: str,
+    raw_text: str,
+    booking_intent_hint: str | None = None,
+):
     global current
 
     if current is not None:
@@ -342,6 +373,11 @@ async def _kick_off_request(ctx: Context, sender: str, user_id: str, raw_text: s
                 end_session=True,
             ),
         )
+        return
+
+    booking_intent = classify_booking_intent(raw_text, booking_intent_hint)
+    if booking_intent == "fee_only":
+        await ctx.send(sender, make_chat(_compose_fee_summary(), end_session=True))
         return
 
     intent = await asyncio.to_thread(_extract_travel_intent, raw_text)
@@ -361,12 +397,18 @@ async def _kick_off_request(ctx: Context, sender: str, user_id: str, raw_text: s
     end_date = intent.get("end_date") or "a date to be confirmed"
     travelers = intent.get("travelers", 1)
 
-    calendar_link = await asyncio.to_thread(_maybe_create_calendar_event, intent, raw_text)
+    calendar_link = (
+        await asyncio.to_thread(_maybe_create_calendar_event, intent, raw_text)
+        if booking_intent == "general"
+        else None
+    )
+    legs_pending = _legs_for_booking_intent(booking_intent)
 
     current = {
         "stage": "active",
         "reply_to": sender,
         "user_id": user_id,
+        "booking_intent": booking_intent,
         "destination": destination,
         "start_date": start_date,
         "end_date": end_date,
@@ -376,24 +418,79 @@ async def _kick_off_request(ctx: Context, sender: str, user_id: str, raw_text: s
         "hotels_reply": None,
         "tournaments": None,
         "tournament_error": None,
-        "legs_pending": {"flights", "hotels", "tournament"},
+        "legs_pending": legs_pending,
         "started_at": datetime.now(timezone.utc),
     }
 
     flights_query = f"Find flights to {destination} from {start_date} to {end_date} for {travelers} adult(s)."
     hotels_query = f"Find hotels in {destination} from {start_date} to {end_date} for {travelers} guest(s)."
 
-    ctx.logger.info("Querying flights agent for %s: %s", user_id, flights_query)
-    await ctx.send(FLIGHTS_AGENT_ADDRESS, make_chat(flights_query))
+    if "flights" in legs_pending:
+        ctx.logger.info("Querying flights agent for %s: %s", user_id, flights_query)
+        await ctx.send(FLIGHTS_AGENT_ADDRESS, make_chat(flights_query))
 
-    ctx.logger.info("Querying hotels agent for %s: %s", user_id, hotels_query)
-    await ctx.send(HOTELS_AGENT_ADDRESS, make_chat(hotels_query))
+    if "hotels" in legs_pending:
+        ctx.logger.info("Querying hotels agent for %s: %s", user_id, hotels_query)
+        await ctx.send(HOTELS_AGENT_ADDRESS, make_chat(hotels_query))
 
-    ctx.logger.info("Starting tournament search for %s near %s", user_id, destination)
-    asyncio.create_task(_run_tournament_leg(ctx, current, destination))
+    if "tournament" in legs_pending:
+        ctx.logger.info("Starting tournament search for %s near %s", user_id, destination)
+        asyncio.create_task(_run_tournament_leg(ctx, current, destination))
 
 
 def _compose_summary(req: dict) -> str:
+    booking_intent = req.get("booking_intent") or "general"
+    if booking_intent == "flight_only":
+        return "\n".join([
+            "Flight Options",
+            "Option 1",
+            f"* Date/time: {req['start_date']} to {req['end_date']}",
+            f"* Route: To {req['destination']}",
+            "* Airline: See flight search result",
+            "* Price: See flight search result",
+            f"* Why it works: {req['flights_reply'] or 'No response from the flights agent yet.'}",
+            "",
+            "Next Step",
+            "Choose a flight to continue to payment.",
+        ])
+
+    if booking_intent == "hotel_only":
+        return "\n".join([
+            "Hotel Options",
+            "Option 1",
+            f"* Check-in: {req['start_date']}",
+            f"* Check-out: {req['end_date']}",
+            f"* Location: {req['destination']}",
+            "* Price: See hotel search result",
+            f"* Why it works: {req['hotels_reply'] or 'No response from the hotels agent yet.'}",
+            "",
+            "Next Step",
+            "Choose a hotel to continue to payment.",
+        ])
+
+    if booking_intent == "flight_hotel":
+        return "\n\n".join([
+            "\n".join([
+                "Flight Options",
+                "Option 1",
+                f"* Date/time: {req['start_date']} to {req['end_date']}",
+                f"* Route: To {req['destination']}",
+                "* Airline: See flight search result",
+                "* Price: See flight search result",
+                f"* Why it works: {req['flights_reply'] or 'No response from the flights agent yet.'}",
+            ]),
+            "\n".join([
+                "Hotel Options",
+                "Option 1",
+                f"* Check-in: {req['start_date']}",
+                f"* Check-out: {req['end_date']}",
+                f"* Location: {req['destination']}",
+                "* Price: See hotel search result",
+                f"* Why it works: {req['hotels_reply'] or 'No response from the hotels agent yet.'}",
+            ]),
+            "\n".join(["Next Step", "Choose a flight or hotel to continue to payment."]),
+        ])
+
     lines = [f"🧳 Logistics for {req['destination']} ({req['start_date']} → {req['end_date']}):"]
     lines.append("\n✈️ Flights:")
     lines.append(req["flights_reply"] or "  (no response from the flights agent yet)")
@@ -427,7 +524,7 @@ def _compose_summary(req: dict) -> str:
 
 async def _finish_active_stage(ctx: Context, req: dict):
     global current
-    has_tournaments = bool(req.get("tournaments"))
+    has_tournaments = req.get("booking_intent") == "general" and bool(req.get("tournaments"))
     await ctx.send(req["reply_to"], make_chat(_compose_summary(req), end_session=not has_tournaments))
     if has_tournaments:
         req["stage"] = "awaiting_pick"
@@ -535,7 +632,13 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
         return
 
     env = decode_envelope(raw, config.DEFAULT_USER_ID)
-    await _kick_off_request(ctx, sender, env["user_id"], env["text"])
+    await _kick_off_request(
+        ctx,
+        sender,
+        env["user_id"],
+        env["text"],
+        env.get("bookingIntent") or env.get("booking_intent"),
+    )
 
 
 @chat_proto.on_message(ChatAcknowledgement)

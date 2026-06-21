@@ -8,6 +8,8 @@
  * The base URL defaults to the bundled mock backend; override with
  * `VITE_API_BASE` (e.g. in a `.env` file) if the backend runs elsewhere.
  */
+import type { AgentTraceEntry } from "@/types/athlete";
+
 export const API_BASE = (import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 
 /** Error carrying the backend's HTTP status so the UI can tailor its message. */
@@ -86,13 +88,29 @@ export const USER_ID = (import.meta.env.VITE_USER_ID ?? "demo-athlete").trim();
 /** Chat endpoint — the orchestrator brain. Override with VITE_CHAT_ENDPOINT. */
 const CHAT_ENDPOINT = (import.meta.env.VITE_CHAT_ENDPOINT ?? "/orchestrator/chat").trim();
 
+export const agentActivityStreamUrl = (flowId: string, messageId?: string) => {
+  const params = new URLSearchParams();
+  if (messageId) params.set("message_id", messageId);
+  const qs = params.toString();
+  return `${API_BASE}/agent-activity/${encodeURIComponent(flowId)}/stream${qs ? `?${qs}` : ""}`;
+};
+
 export type ChatMode = "dashboard" | "full";
 
+const ORCHESTRATOR_RESPONSE_RULES = [
+  "You are the orchestrating agent for this app. Coordinate tools and return a clean, user-friendly final answer.",
+  "Start with the direct answer or best recommendation.",
+  "Use short labeled sections when helpful: Summary, Best Option, Details, Calendar Update, Next Step.",
+  "Avoid long paragraphs, raw tool results, raw JSON, internal reasoning, tool calls, or agent routing details.",
+  "For flights, hotels, bookings, or schedules, use simple card-like lines for date/time, price, location, and why it works.",
+  "Always respect the user's specific booking intent. If the user asks for only one booking category, return only that category. Do not bundle flight, hotel, fees, or other travel items unless the user explicitly asks for them. For example, if the user says 'book flight,' show only flight options and the flight booking/payment flow. If the user says 'book hotel,' show only hotel options. If the user says 'book flight and hotel,' show both. Keep unrelated categories hidden.",
+  "When payment is needed, clearly state what the user must confirm.",
+  "If information is missing, ask one short clarification question only.",
+].join(" ");
+
 export const CHAT_SYSTEM_INSTRUCTIONS: Record<ChatMode, string> = {
-  dashboard:
-    "You are a compact dashboard assistant. Answer in 1-3 short sentences. Keep it simple and practical. Do not provide long explanations. If more detail is needed, suggest opening the full chat page.",
-  full:
-    "You are the main assistant. Provide accurate, complete, and helpful answers with enough detail for the user to act on.",
+  dashboard: `${ORCHESTRATOR_RESPONSE_RULES} This answer is for the dashboard mini chat: keep it to 1-3 short sentences.`,
+  full: `${ORCHESTRATOR_RESPONSE_RULES} This answer is for the main chat page: provide enough detail, but keep it organized and easy to scan.`,
 };
 
 /** A bookable travel option the orchestrator surfaced (flight/hotel/entry). */
@@ -109,6 +127,57 @@ export interface BookingOption {
   endTime?: string;
   provider?: string;
 }
+
+export type BookingIntent = "flight_only" | "hotel_only" | "flight_hotel" | "fee_only" | "general";
+
+const BOOKING_INTENTS = new Set<BookingIntent>([
+  "flight_only",
+  "hotel_only",
+  "flight_hotel",
+  "fee_only",
+  "general",
+]);
+
+const _bookingIntent = (value: unknown): BookingIntent =>
+  typeof value === "string" && BOOKING_INTENTS.has(value as BookingIntent)
+    ? (value as BookingIntent)
+    : "general";
+
+const _bookingIntentFromText = (value: string): BookingIntent => {
+  const text = value.toLowerCase().replace(/\s+/g, " ").trim();
+  const excludesFlight = /\b(no|not|without|exclude)\b.*\bflights?\b/.test(text);
+  const excludesHotel = /\b(no|not|without|exclude)\b.*\bhotels?\b/.test(text);
+  const onlyFlight = /\bonly\b.*\bflights?\b|\bflights?\b.*\bonly\b/.test(text);
+  const onlyHotel = /\bonly\b.*\bhotels?\b|\bhotels?\b.*\bonly\b/.test(text);
+  const wantsFlight = !excludesFlight && (
+    /\b(book|find|prepare|get|show)\b.*\bflights?\b/.test(text) ||
+    /\bflights?\b.*\b(book|booking|to|for)\b/.test(text) ||
+    /\bplane tickets?\b|\bairfare\b/.test(text)
+  );
+  const wantsHotel = !excludesHotel && (
+    /\b(book|find|prepare|get|show)\b.*\bhotels?\b/.test(text) ||
+    /\bhotels?\b.*\b(book|booking|near|for)\b/.test(text) ||
+    /\bstay near\b|\baccommodations?\b|\brooms?\b/.test(text)
+  );
+  const wantsFee = /\b(fee|fees|service fee|payment fee|cost breakdown)\b/.test(text);
+
+  if (onlyFlight) return "flight_only";
+  if (onlyHotel) return "hotel_only";
+  if (wantsFlight && wantsHotel) return "flight_hotel";
+  if (wantsFlight) return "flight_only";
+  if (wantsHotel) return "hotel_only";
+  if (wantsFee) return "fee_only";
+  if (/\b(plan|book|find)\b.*\b(travel|trip)\b/.test(text)) return "flight_hotel";
+  return "general";
+};
+
+const _filterOptionsForIntent = (options: BookingOption[], intent: BookingIntent): BookingOption[] => {
+  if (intent === "flight_only") return options.filter((option) => option.kind === "flight");
+  if (intent === "hotel_only") return options.filter((option) => option.kind === "hotel");
+  if (intent === "flight_hotel") return options.filter((option) => option.kind === "flight" || option.kind === "hotel");
+  if (intent === "fee_only") return [];
+  return options;
+};
 
 export interface BookingRecord extends BookingOption {
   id?: string;
@@ -223,8 +292,14 @@ export interface ChatReply {
   message: string;
   /** log | ask | action | none | error — backend's routing decision. */
   intent: string;
+  /** requested booking category, when the message is logistics-related. */
+  bookingIntent: BookingIntent;
   /** which specialist(s) the orchestrator used (e.g. ["recovery"]). */
   agentsUsed: string[];
+  /** real runtime hand-off log driving the Live Agent network (may be empty). */
+  agentTrace: AgentTraceEntry[];
+  flowId?: string;
+  messageId?: string;
   /** one-liner of the real Supabase data the answer was grounded in. */
   contextSummary: string;
   /** non-fatal notices (missing data, booking-not-connected, etc.). */
@@ -239,6 +314,35 @@ export interface ChatReply {
 
 const _strArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x) => x != null).map(String) : [];
+
+/** Pass the backend hand-off log through, keeping only well-formed entries. */
+const _traceArray = (v: unknown): AgentTraceEntry[] => {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
+    .map((e) => ({
+      eventId: typeof e.eventId === "string" ? e.eventId : undefined,
+      flowId: typeof e.flowId === "string" ? e.flowId : undefined,
+      messageId: typeof e.messageId === "string" ? e.messageId : undefined,
+      type: typeof e.type === "string" ? e.type : undefined,
+      agent: typeof e.agent === "string" ? e.agent : undefined,
+      agentName: typeof e.agentName === "string" ? e.agentName : undefined,
+      from: typeof e.from === "string" ? e.from : undefined,
+      fromAgent: typeof e.fromAgent === "string" ? e.fromAgent : undefined,
+      to: typeof e.to === "string" ? e.to : undefined,
+      toAgent: typeof e.toAgent === "string" ? e.toAgent : undefined,
+      status: typeof e.status === "string" ? e.status : undefined,
+      step: typeof e.step === "string" ? e.step : undefined,
+      ts: typeof e.ts === "number" ? e.ts : undefined,
+      timestamp: typeof e.timestamp === "number" ? e.timestamp : undefined,
+      durationMs: typeof e.durationMs === "number" ? e.durationMs : undefined,
+      metadata:
+        e.metadata && typeof e.metadata === "object" && !Array.isArray(e.metadata)
+          ? (e.metadata as Record<string, string | number | boolean>)
+          : undefined,
+    }))
+    .filter((e) => e.agent || e.agentName || e.from || e.fromAgent || e.to || e.toAgent);
+};
 
 /**
  * Send one user message to the orchestrator and return its structured reply.
@@ -255,6 +359,8 @@ export async function sendChatMessage(
     context?: Record<string, unknown>;
     mode?: ChatMode;
     systemInstruction?: string;
+    flowId?: string;
+    messageId?: string;
     signal?: AbortSignal;
   } = {}
 ): Promise<ChatReply> {
@@ -270,6 +376,8 @@ export async function sendChatMessage(
     user_id: opts.userId ?? USER_ID,
     message,
     session_id: opts.sessionId,
+    flow_id: opts.flowId,
+    message_id: opts.messageId,
     response_mode: mode,
     system_instruction: systemInstruction,
     context,
@@ -312,23 +420,36 @@ export async function sendChatMessage(
     (typeof payload?.answer === "string" && payload.answer.trim()) ||
     "I couldn't find an answer for that yet.";
 
+  const explicitBookingIntent = _bookingIntentFromText(message);
+  const bookingIntent =
+    explicitBookingIntent === "general"
+      ? _bookingIntent(payload?.bookingIntent ?? payload?.booking_intent)
+      : explicitBookingIntent;
+  const options = Array.isArray(payload?.options)
+    ? (payload.options as Record<string, unknown>[]).map(_bookingOption)
+    : [];
+
   const reply: ChatReply = {
     message: text,
     intent: typeof payload?.intent === "string" ? payload.intent : "",
+    bookingIntent,
     agentsUsed: _strArray(payload?.agents_used),
+    agentTrace: _traceArray(payload?.agentTrace ?? payload?.agent_trace),
+    flowId: typeof payload?.flowId === "string" ? payload.flowId : undefined,
+    messageId: typeof payload?.messageId === "string" ? payload.messageId : undefined,
     contextSummary: typeof payload?.athlete_context_summary === "string" ? payload.athlete_context_summary : "",
     warnings: _strArray(payload?.warnings),
     suggestedActions: _strArray(payload?.suggested_actions),
     sources: _strArray(payload?.sources),
-    options: Array.isArray(payload?.options)
-      ? (payload.options as Record<string, unknown>[]).map(_bookingOption)
-      : [],
+    options: _filterOptionsForIntent(options, bookingIntent),
   };
 
   if (import.meta.env.DEV) {
     console.debug("[chat] ←", {
       intent: reply.intent,
+      bookingIntent: reply.bookingIntent,
       agents: reply.agentsUsed,
+      trace: reply.agentTrace.length,
       message: reply.message.slice(0, 80),
       warnings: reply.warnings.length,
       options: reply.options.length,
@@ -349,15 +470,20 @@ export interface CheckoutResult {
   bookingId?: string;
   sessionId?: string;
   error?: string;
+  agentTrace?: AgentTraceEntry[];
+  flowId?: string;
+  messageId?: string;
 }
 
 /** Open a Stripe test Checkout Session for one option. Redirect to `checkoutUrl`. */
 export async function createBookingCheckout(
   option: BookingOption,
-  opts: { userId?: string } = {}
+  opts: { userId?: string; flowId?: string; messageId?: string } = {}
 ): Promise<CheckoutResult> {
   const body = {
     user_id: opts.userId ?? USER_ID,
+    flow_id: opts.flowId,
+    message_id: opts.messageId,
     option: {
       kind: option.kind,
       title: option.title,
@@ -396,6 +522,9 @@ export async function createBookingCheckout(
     bookingId: payload?.booking_id != null ? String(payload.booking_id) : undefined,
     sessionId: typeof payload?.session_id === "string" ? payload.session_id : undefined,
     error: typeof payload?.error === "string" ? payload.error : undefined,
+    agentTrace: _traceArray(payload?.agentTrace ?? payload?.agent_trace),
+    flowId: typeof payload?.flowId === "string" ? payload.flowId : undefined,
+    messageId: typeof payload?.messageId === "string" ? payload.messageId : undefined,
   };
 }
 
@@ -405,16 +534,39 @@ export interface ConfirmBookingResult {
   bookingId?: string;
   booking?: BookingRecord;
   event?: BookingEventPayload;
+  agentTrace?: AgentTraceEntry[];
+  flowId?: string;
+  messageId?: string;
 }
 
 /** Verify a returned Stripe Checkout Session and mark the booking paid. */
 export async function confirmBooking(sessionId: string): Promise<ConfirmBookingResult> {
-  const res = await fetch(`${API_BASE}/bookings/confirm`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId }),
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 20_000);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/bookings/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if ((e as Error)?.name === "AbortError") {
+      throw new ApiError("Payment verification timed out. Please try returning to the dashboard and checking again.", 0);
+    }
+    throw new ApiError(`Could not reach the booking verification service at ${API_BASE}.`, 0);
+  } finally {
+    window.clearTimeout(timeout);
+  }
   const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!res.ok || payload?.ok === false) {
+    const detail =
+      (typeof payload?.detail === "string" && payload.detail) ||
+      (typeof payload?.error === "string" && payload.error) ||
+      `Payment verification failed (${res.status})`;
+    throw new ApiError(detail, res.status);
+  }
   const bookingPayload = payload?.booking && typeof payload.booking === "object" ? payload.booking as Record<string, unknown> : undefined;
   const eventPayload =
     (payload?.calendar_event && typeof payload.calendar_event === "object" ? payload.calendar_event as Record<string, unknown> : undefined) ??
@@ -425,6 +577,9 @@ export async function confirmBooking(sessionId: string): Promise<ConfirmBookingR
     bookingId: payload?.booking_id != null ? String(payload.booking_id) : undefined,
     booking: bookingPayload ? _bookingRecord(bookingPayload) : undefined,
     event: _bookingEventPayload(eventPayload),
+    agentTrace: _traceArray(payload?.agentTrace ?? payload?.agent_trace),
+    flowId: typeof payload?.flowId === "string" ? payload.flowId : undefined,
+    messageId: typeof payload?.messageId === "string" ? payload.messageId : undefined,
   };
 }
 

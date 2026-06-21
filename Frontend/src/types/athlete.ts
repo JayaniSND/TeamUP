@@ -1,5 +1,5 @@
 /**
- * Domain types for the Athlete Analytics OS.
+ * Domain types for SportsMom.
  *
  * These mirror the backend contract in `framework_draft.md` so the mock data
  * in `data/mockAthleteData.ts` can later be swapped for real API responses
@@ -131,7 +131,7 @@ export type SharedCalendarEventType =
   | "tournament_entry"
   | "booking";
 
-export type SharedCalendarEventSource = "initial" | "booking" | "ai-chat" | "backend" | "manual";
+export type SharedCalendarEventSource = "initial" | "booking" | "payment" | "ai-chat" | "backend" | "manual";
 
 export interface SharedCalendarEvent {
   id: string;
@@ -140,14 +140,20 @@ export interface SharedCalendarEvent {
   startTime: string; // e.g. "9:00 AM" or "TBD"
   endDate?: string;
   endTime?: string;
+  start?: string;
+  end?: string;
   type: SharedCalendarEventType;
   location?: string;
   source: SharedCalendarEventSource;
   notes?: string;
+  details?: string;
   status?: string;
   bookingType?: string;
   paymentStatus?: string;
   provider?: string;
+  createdAt?: string;
+  paymentSessionId?: string;
+  bookingOptionKey?: string;
 }
 
 /** What a single block on the weekly calendar represents. */
@@ -207,6 +213,30 @@ export interface ChatPrompt {
   section: string;
 }
 
+/**
+ * One step in the orchestrator's runtime hand-off log (backend `agent_trace`).
+ * Either a node event (`agent` + status) or a hand-off (`from`/`to` + status).
+ * Drives the Live Agent visualization so it shows only the agents that ran.
+ */
+export interface AgentTraceEntry {
+  eventId?: string;
+  flowId?: string;
+  messageId?: string;
+  type?: string;
+  agent?: string;
+  agentName?: string;
+  from?: string;
+  fromAgent?: string;
+  to?: string;
+  toAgent?: string;
+  status?: string; // started | in_progress | completed | error
+  step?: string;
+  ts?: number;
+  timestamp?: number;
+  durationMs?: number;
+  metadata?: Record<string, string | number | boolean>;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -214,6 +244,10 @@ export interface ChatMessage {
   sources?: string[];
   /** specialist agents the orchestrator used for this reply (e.g. ["recovery"]). */
   agents?: string[];
+  /** real runtime hand-off log for this reply (drives the Live Agent network). */
+  trace?: AgentTraceEntry[];
+  flowId?: string;
+  messageId?: string;
   /** tappable follow-up prompts suggested by the orchestrator. */
   actions?: string[];
   /** marks an error reply so the bubble can be styled distinctly. */

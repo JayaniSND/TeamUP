@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -9,7 +10,19 @@ import {
   type ReactNode,
 } from "react";
 import { useCalendarEvents } from "@/context/CalendarEventsContext";
-import { ApiError, CHAT_SYSTEM_INSTRUCTIONS, sendChatMessage, type ChatMode } from "@/lib/api";
+import {
+  ApiError,
+  CHAT_SYSTEM_INSTRUCTIONS,
+  agentActivityStreamUrl,
+  sendChatMessage,
+  type ChatMode,
+} from "@/lib/api";
+import { applyAgentTraceEvent, resetAgentActivity } from "@/lib/agents/agentActivityStore";
+import {
+  isPaymentSessionActive,
+  restorePaymentSessionState,
+  savePaymentSessionState,
+} from "@/lib/paymentSessionState";
 import type { ChatMessage, SharedCalendarEvent } from "@/types/athlete";
 
 // Monotonic id generator shared by every surface that appends to the thread, so
@@ -22,11 +35,22 @@ interface ChatSessionContextValue {
   loading: boolean;
   /** Send one message to the orchestrator. Singleton + guarded against double sends. */
   send: (text: string, opts?: { mode?: ChatMode }) => Promise<void>;
+  /** Append a local assistant notice without calling the orchestrator. */
+  appendAssistantMessage: (text: string) => void;
   /** Last externally-seeded question id processed, so co-mounted surfaces dedupe. */
   lastSeedIdRef: MutableRefObject<number>;
 }
 
 const ChatSessionContext = createContext<ChatSessionContextValue | null>(null);
+
+const loadCheckoutMessages = (): ChatMessage[] | null => {
+  if (!isPaymentSessionActive()) return null;
+  const messages = restorePaymentSessionState()?.chatMessages;
+  return Array.isArray(messages) && messages.length ? messages : null;
+};
+
+const loadCheckoutSessionId = () =>
+  isPaymentSessionActive() ? restorePaymentSessionState()?.chatSessionId || "" : "";
 
 const compactCalendarEvent = (event: SharedCalendarEvent) => ({
   id: event.id,
@@ -53,7 +77,10 @@ const truncateAtWord = (text: string, limit: number) => {
 };
 
 const compactDashboardReply = (text: string) => {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const stripped = text
+    .replace(/^(summary|best option|details|calendar plan|calendar update|other options|draft email|next step)\s*$/gim, "")
+    .replace(/^\s*\*\s+/gm, "");
+  const normalized = stripped.replace(/\s+/g, " ").trim();
   if (!normalized) return text;
 
   const sentences = normalized.match(/[^.!?]+(?:[.!?]+|$)/g)?.map((s) => s.trim()).filter(Boolean) ?? [
@@ -73,6 +100,38 @@ const compactDashboardReply = (text: string) => {
   return reply;
 };
 
+const newRuntimeId = (prefix: string) =>
+  globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+function openAgentActivityStream(flowId: string, messageId: string) {
+  if (typeof EventSource === "undefined") {
+    return { eventSource: null, ready: Promise.resolve() };
+  }
+
+  const eventSource = new EventSource(agentActivityStreamUrl(flowId, messageId));
+  eventSource.addEventListener("agent_activity", (event) => {
+    try {
+      applyAgentTraceEvent(JSON.parse((event as MessageEvent).data));
+    } catch {
+      // Ignore malformed activity events; chat response handling remains authoritative.
+    }
+  });
+
+  let done = false;
+  const ready = new Promise<void>((resolve) => {
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    eventSource.onopen = finish;
+    eventSource.onerror = finish;
+    window.setTimeout(finish, 450);
+  });
+
+  return { eventSource, ready };
+}
+
 /**
  * Session-level home for the AI chat. The thread, the loading flag, and the
  * single send engine all live here so there is exactly ONE conversation no
@@ -81,8 +140,9 @@ const compactDashboardReply = (text: string) => {
  * this state. That means navigating between them, or booking + paying, keeps
  * every previous message.
  *
- * History is intentionally kept in React runtime state only — it is NOT
- * persisted, so a manual browser refresh resets the conversation to the greeting.
+ * History is kept in React runtime state, except for a short checkout-only
+ * snapshot used to survive the same-tab Stripe redirect. A normal browser
+ * refresh resets the conversation to the greeting.
  *
  * Every message is forwarded to the single orchestrator endpoint
  * (lib/api.sendChatMessage); this engine never picks an agent — the backend
@@ -95,16 +155,17 @@ export function ChatSessionProvider({
   greeting: string;
   children: ReactNode;
 }) {
-  const { events } = useCalendarEvents();
+  const { events, pendingPayment } = useCalendarEvents();
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
-    { id: nextChatId(), role: "assistant", text: greeting },
+    ...(loadCheckoutMessages() ?? [{ id: nextChatId(), role: "assistant", text: greeting }]),
   ]);
   const [loading, setLoading] = useState(false);
 
   const sessionIdRef = useRef<string>("");
   if (!sessionIdRef.current) {
     sessionIdRef.current =
-      globalThis.crypto?.randomUUID?.() ?? `s-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      loadCheckoutSessionId() ||
+      (globalThis.crypto?.randomUUID?.() ?? `s-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }
 
   // Live in-flight mirror so the guard reads the current value synchronously and
@@ -128,6 +189,24 @@ export function ChatSessionProvider({
     };
   }, [events]);
 
+  useEffect(() => {
+    if (pendingPayment) {
+      savePaymentSessionState({
+        chatMessages: messages,
+        chatSessionId: sessionIdRef.current,
+      });
+    }
+  }, [messages, pendingPayment]);
+
+  const appendAssistantMessage = useCallback((text: string) => {
+    const normalized = text.trim();
+    if (!normalized) return;
+    setMessages((m) => {
+      if (m[m.length - 1]?.role === "assistant" && m[m.length - 1]?.text === normalized) return m;
+      return [...m, { id: nextChatId(), role: "assistant", text: normalized }];
+    });
+  }, []);
+
   const send = useCallback(async (text: string, opts: { mode?: ChatMode } = {}) => {
     const question = text.trim();
     if (!question || inFlight.current) return; // ignore empty + duplicate sends
@@ -138,14 +217,22 @@ export function ChatSessionProvider({
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    const flowId = newRuntimeId("flow");
+    const messageId = newRuntimeId("msg");
 
-    setMessages((m) => [...m, { id: nextChatId(), role: "user", text: question }]);
+    resetAgentActivity();
+    const { eventSource, ready: streamReady } = openAgentActivityStream(flowId, messageId);
+
+    setMessages((m) => [...m, { id: messageId, role: "user", text: question, flowId, messageId }]);
 
     try {
+      await streamReady;
       // Forward only the message + identity/session/page — the orchestrator
       // decides which agent(s) handle it (incl. travel/booking).
       const reply = await sendChatMessage(question, {
         sessionId: sessionIdRef.current,
+        flowId,
+        messageId,
         mode,
         systemInstruction: CHAT_SYSTEM_INSTRUCTIONS[mode],
         context: {
@@ -167,6 +254,9 @@ export function ChatSessionProvider({
           text: mode === "dashboard" ? compactDashboardReply(reply.message) : reply.message,
           sources: grounding,
           agents: reply.agentsUsed.length ? reply.agentsUsed : undefined,
+          trace: reply.agentTrace.length ? reply.agentTrace : undefined,
+          flowId: reply.flowId,
+          messageId: reply.messageId,
           actions: reply.suggestedActions.length
             ? mode === "dashboard"
               ? reply.suggestedActions.slice(0, 2)
@@ -179,8 +269,19 @@ export function ChatSessionProvider({
       if ((e as Error)?.name === "AbortError") return; // superseded — drop silently
       const msg =
         e instanceof ApiError ? e.message : "Something went wrong reaching the AI. Please try again.";
-      setMessages((m) => [...m, { id: nextChatId(), role: "assistant", text: msg, isError: true }]);
+      setMessages((m) => [
+        ...m,
+        {
+          id: nextChatId(),
+          role: "assistant",
+          text: mode === "dashboard" ? compactDashboardReply(msg) : msg,
+          isError: true,
+        },
+      ]);
     } finally {
+      if (eventSource) {
+        window.setTimeout(() => eventSource?.close(), 1000);
+      }
       if (abortRef.current === controller) {
         inFlight.current = false;
         setLoading(false);
@@ -190,8 +291,8 @@ export function ChatSessionProvider({
   }, [calendarContext]);
 
   const value = useMemo<ChatSessionContextValue>(
-    () => ({ messages, loading, send, lastSeedIdRef }),
-    [loading, messages, send]
+    () => ({ messages, loading, send, appendAssistantMessage, lastSeedIdRef }),
+    [appendAssistantMessage, loading, messages, send]
   );
 
   return <ChatSessionContext.Provider value={value}>{children}</ChatSessionContext.Provider>;

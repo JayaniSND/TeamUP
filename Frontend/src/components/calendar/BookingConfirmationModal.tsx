@@ -24,9 +24,9 @@ export function BookingConfirmationModal() {
     navigate("/calendar");
   };
 
-  // Close + return to whichever page the booking was started from (Dashboard or
-  // AI Chat). We never navigated away, so this is a same-session route change —
-  // no reload, and the chat thread is still in memory when we land back on it.
+  // Close + return to whichever page the booking was started from. The checkout
+  // return restored the temporary session first, so this route change keeps the
+  // chat thread and paid calendar event in memory.
   const done = () => {
     closeConfirmation();
     if (returnTo && returnTo !== window.location.pathname) navigate(returnTo);

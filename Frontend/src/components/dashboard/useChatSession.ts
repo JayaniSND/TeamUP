@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useChatSessionState } from "@/context/ChatSessionContext";
 import { useCalendarEvents } from "@/context/CalendarEventsContext";
+import { calendarEventBookingKey } from "@/lib/bookingIdentity";
+import { savePrePaymentState } from "@/lib/paymentSessionPersistence";
 import type { ChatMode } from "@/lib/api";
 import type { BookingOption } from "@/types/athlete";
 
@@ -18,14 +20,14 @@ export interface ChatSeed {
  * conversation that survives navigation and the booking/payment flow. Only the
  * composer `input` is local to each surface.
  *
- * Booking no longer redirects to a hosted checkout page — `book` opens the
- * in-app PaymentModal (via the calendar context), so the app never reloads and
- * the chat history + originating route are preserved.
+ * Booking opens the checkout confirmation modal, then redirects to Stripe in
+ * the same tab. The calendar/chat contexts preserve the handoff state until
+ * Stripe returns.
  */
 export function useChatSession(opts: { seed?: ChatSeed | null; mode?: ChatMode } = {}) {
   const { seed, mode = "full" } = opts;
   const { messages, loading, send: sendMessage, lastSeedIdRef } = useChatSessionState();
-  const { startPayment, pendingPayment } = useCalendarEvents();
+  const { events, startPayment, pendingPayment } = useCalendarEvents();
 
   const [input, setInput] = useState("");
 
@@ -36,9 +38,10 @@ export function useChatSession(opts: { seed?: ChatSeed | null; mode?: ChatMode }
 
   const book = useCallback(
     (option: BookingOption) => {
+      savePrePaymentState({ chatMessages: messages });
       startPayment(option);
     },
-    [startPayment]
+    [messages, startPayment]
   );
 
   // Submit the composer: clear the field, then send. Safe to clear optimistically
@@ -60,6 +63,15 @@ export function useChatSession(opts: { seed?: ChatSeed | null; mode?: ChatMode }
 
   // The button for the option currently in checkout shows as busy/disabled.
   const bookingBusy = pendingPayment?.option.title ?? null;
+  const paidBookingKeys = useMemo(
+    () =>
+      new Set(
+        events
+          .filter((event) => event.source === "payment" && (event.paymentStatus === "paid" || event.status === "Paid"))
+          .map(calendarEventBookingKey)
+      ),
+    [events]
+  );
 
-  return { messages, input, setInput, loading, send, submit, book, bookingBusy };
+  return { messages, input, setInput, loading, send, submit, book, bookingBusy, paidBookingKeys };
 }

@@ -8,6 +8,7 @@ import AssistantPage from "./pages/AssistantPage";
 import LandingPage from "./pages/LandingPage";
 import CheckoutReturnPage from "./pages/CheckoutReturnPage";
 import { BookingConfirmationModal } from "./components/calendar/BookingConfirmationModal";
+import { PaymentNoticeToast } from "./components/calendar/PaymentNoticeToast";
 import { PaymentModal } from "./components/calendar/PaymentModal";
 import { CalendarEventsProvider } from "./context/CalendarEventsContext";
 import { ChatSessionProvider } from "./context/ChatSessionContext";
@@ -36,6 +37,7 @@ createRoot(document.getElementById("root")!).render(
           </Routes>
           <PaymentModal />
           <BookingConfirmationModal />
+          <PaymentNoticeToast />
         </ChatSessionProvider>
       </CalendarEventsProvider>
     </BrowserRouter>

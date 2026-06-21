@@ -16,6 +16,7 @@ Run:  python -m agents.orchestrator   (from Backend/)
 
 from __future__ import annotations
 
+import re
 from uuid import uuid4
 
 from uagents import Agent, Context, Protocol
@@ -27,6 +28,7 @@ from uagents_core.contrib.protocols.chat import (
 
 from .common import backend_client as backend
 from .common import claude, config
+from .common.booking_intent import classify_booking_intent
 from .common.chat import (
     decode_envelope,
     encode_envelope,
@@ -46,14 +48,33 @@ chat_proto = Protocol(spec=chat_protocol_spec)
 
 
 # ── formatting ─────────────────────────────────────────────────────
+def _short_text(value, limit: int = 140) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= limit:
+        return text or "Not specified."
+    clipped = re.sub(r"\s+\S*$", "", text[:limit]).strip(" ,:;")
+    return clipped or text[:limit].strip()
+
+
 def _format_filing(entries: list[dict]) -> str:
     if not entries:
-        return "I couldn't find anything to file in that note."
+        return (
+            "Summary\n"
+            "I did not find enough detail to file that note.\n\n"
+            "Next Step\n"
+            "Add the practice, match, recovery, or schedule detail you want saved."
+        )
     sections = sorted({e["section"] for e in entries})
-    lines = [f"📓 Filed {len(entries)} entr{'y' if len(entries) == 1 else 'ies'}:"]
+    lines = [
+        "Summary",
+        f"Filed {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} from your note.",
+        "",
+        "Details",
+    ]
     for e in entries:
-        lines.append(f"  • [{e['section']}] {e['text']}")
-    lines.append(f"Sections: {', '.join(sections)}.")
+        label = e["section"].replace("_", " ").title()
+        lines.append(f"* {label}: {_short_text(e.get('text'), 110)}")
+    lines += ["", "Next Step", f"Review the {', '.join(sections)} update in the dashboard."]
     return "\n".join(lines)
 
 
@@ -97,11 +118,22 @@ async def _inline_specialist(name: str, user_id: str, note: str) -> str:
             v.get("summary", ""), v.get("severity", "info"), v.get("recommended_action", ""),
         )
         parts = ", ".join(v.get("body_parts") or []) or "an area"
-        out = f"⚠️ Recovery (risk {v.get('risk_level')}, {parts}): {v.get('summary', '')} 👉 {v.get('recommended_action', '')}"
+        out = (
+            "Summary\n"
+            f"Recovery signal is {v.get('risk_level', 'unknown')} for {parts}.\n\n"
+            "Details\n"
+            f"* {_short_text(v.get('summary'), 170)}\n"
+            f"* Suggested adjustment: {_short_text(v.get('recommended_action'), 150)}"
+        )
         if v.get("pattern_type", "none") not in ("none", ""):
-            out += f"\n🔎 Pattern — {v['pattern_type'].replace('_', ' ')}: {v.get('pattern_summary', '')}"
+            out += (
+                "\n"
+                f"* Pattern: {v['pattern_type'].replace('_', ' ')} - "
+                f"{_short_text(v.get('pattern_summary'), 150)}"
+            )
             if v.get("chain_message"):
-                out += f"\n   ➡️ {v['chain_message']}"
+                out += f"\n* Follow-up: {_short_text(v.get('chain_message'), 150)}"
+        out += "\n\nNext Step\nUse this as wellness guidance only."
         return out
     if name == "performance":
         v = await claude.analyze_performance(
@@ -114,7 +146,16 @@ async def _inline_specialist(name: str, user_id: str, note: str) -> str:
             user_id, "Performance Agent", "performance",
             v.get("summary", ""), "info", v.get("recommended_focus", ""),
         )
-        return f"📈 Performance ({v.get('trend')}): {v.get('summary', '')} 👉 {v.get('recommended_focus', '')}"
+        return (
+            "Summary\n"
+            f"Performance trend: {v.get('trend', 'unknown')}.\n\n"
+            "Details\n"
+            f"* {_short_text(v.get('summary'), 180)}\n"
+            f"* Strongest area: {_short_text(v.get('strongest_area'), 90)}\n"
+            f"* Work on: {_short_text(v.get('weakest_area'), 90)}\n\n"
+            "Next Step\n"
+            f"{_short_text(v.get('recommended_focus'), 150)}"
+        )
     if name == "sponsorship":
         v = await claude.suggest_sponsorship(
             note,
@@ -128,7 +169,19 @@ async def _inline_specialist(name: str, user_id: str, note: str) -> str:
             "fit_score": v.get("fit_score", 0), "reason": v.get("reason", ""),
             "draft_email": v.get("draft_email", ""), "status": "drafted",
         })
-        return f"🤝 Sponsor: {v.get('brand_name')} (fit {v.get('fit_score', 0):.2f}) — draft ready for review (not sent)."
+        try:
+            fit = f"{float(v.get('fit_score', 0)):.2f}"
+        except (TypeError, ValueError):
+            fit = str(v.get("fit_score", 0))
+        return (
+            "Summary\n"
+            f"Best sponsor fit: {v.get('brand_name', 'Unknown brand')} (fit {fit}).\n\n"
+            "Details\n"
+            f"* Why it fits: {_short_text(v.get('reason'), 160)}\n"
+            "* Status: Draft created only. Nothing was sent.\n\n"
+            "Next Step\n"
+            "Review and approve the draft before sending."
+        )
     if name == "fitness":
         v = await claude.suggest_fitness_plan(
             note,
@@ -145,8 +198,13 @@ async def _inline_specialist(name: str, user_id: str, note: str) -> str:
             f"{d['day']}: {d['session_type']} ({d['intensity']})" for d in days[:3]
         )
         return (
-            f"🏋️ Fitness ({v.get('trigger')}): {v.get('summary', '')} "
-            f"👉 {plan_preview or v.get('recommended_action', '')}"
+            "Summary\n"
+            f"Fitness plan trigger: {v.get('trigger', 'training adjustment')}.\n\n"
+            "Details\n"
+            f"* {_short_text(v.get('summary'), 170)}\n"
+            f"* Plan preview: {_short_text(plan_preview or v.get('recommended_action'), 150)}\n\n"
+            "Next Step\n"
+            "Review the plan before adding sessions to your calendar."
         )
     if name == "coaching":
         v = await claude.coach_strategy(
@@ -160,8 +218,13 @@ async def _inline_specialist(name: str, user_id: str, note: str) -> str:
             v.get("summary", ""), "info", v.get("recommended_action", ""),
         )
         return (
-            f"🎯 Coaching ({v.get('trigger')}): {v.get('summary', '')} "
-            f"👉 {v.get('tactical_advice', '')}"
+            "Summary\n"
+            f"Coaching focus: {v.get('trigger', 'performance improvement')}.\n\n"
+            "Details\n"
+            f"* {_short_text(v.get('summary'), 170)}\n"
+            f"* Tactical advice: {_short_text(v.get('tactical_advice'), 150)}\n\n"
+            "Next Step\n"
+            f"{_short_text(v.get('recommended_action'), 150)}"
         )
     return ""
 
@@ -175,12 +238,17 @@ async def _run_inline(ctx: Context, user: str, user_id: str, dump: str):
     summaries: list[str] = []
     for name, texts in _agent_texts(entries).items():
         if name in ("logistics", "scout"):
-            summaries.append(f"↪️ {name.title()}: needs the {name} agent running (start it to enable).")
+            summaries.append(
+                "Summary\n"
+                f"{name.title()} needs its agent running before it can complete this request.\n\n"
+                "Next Step\n"
+                f"Start the {name} agent to enable this workflow."
+            )
             continue
         s = await _inline_specialist(name, user_id, " ".join(texts))
         if s:
             summaries.append(s)
-    await ctx.send(user, make_chat("\n".join(summaries) or "Done.", end_session=True))
+    await ctx.send(user, make_chat("\n\n".join(summaries) or "Summary\nDone.", end_session=True))
 
 
 # ── chat protocol ──────────────────────────────────────────────────
@@ -189,11 +257,10 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     await ctx.send(sender, make_ack(msg))
     if is_start(msg):
         await ctx.send(sender, make_chat(
-            "👋 I'm BASELINE — your sports analytics assistant. Two things you can do:\n"
-            "• Log: brain-dump after practice/a match and I'll file it, track your "
-            "form, watch for overtraining, and surface sponsor fits.\n"
-            "• Ask: 'how's my serve trending?', 'am I overtrained?', 'find me a "
-            "tournament' — I'll route it to the right place and answer."
+            "Summary\n"
+            "I can help with athlete logging, performance questions, recovery patterns, travel, and sponsorship drafts.\n\n"
+            "Next Step\n"
+            "Send a practice note, match recap, or question."
         ))
         return
 
@@ -224,12 +291,18 @@ async def _on_user_message(ctx: Context, sender: str, env: dict):
     """ASI:One gateway: read intent, then log / answer / act (framework v4 §6a)."""
     user_id, message = env["user_id"], env["text"]
     intent = await claude.classify_intent(message)
-    ctx.logger.info("Intent=%s agent=%s", intent.get("intent"), intent.get("agent"))
+    booking_intent = classify_booking_intent(message, intent.get("bookingIntent"))
+    ctx.logger.info(
+        "Intent=%s agent=%s bookingIntent=%s",
+        intent.get("intent"),
+        intent.get("agent"),
+        booking_intent,
+    )
 
     if intent.get("intent") == "ask":
         await _handle_ask(ctx, sender, user_id, message)
     elif intent.get("intent") == "action" and intent.get("agent") not in (None, "none"):
-        await _handle_action(ctx, sender, user_id, message, intent["agent"])
+        await _handle_action(ctx, sender, user_id, message, intent["agent"], booking_intent)
     else:  # "log" — file it through the Librarian
         await _on_new_dump(ctx, sender, env)
 
@@ -240,15 +313,26 @@ async def _handle_ask(ctx: Context, user: str, user_id: str, question: str):
     answer = (res or {}).get("answer")
     if not answer:
         await ctx.send(user, make_chat(
-            "I couldn't reach the chat/RAG service to answer that yet.", end_session=True
+            "Summary\n"
+            "I could not reach the chat service to answer that yet.\n\n"
+            "Next Step\n"
+            "Please try again in a moment.",
+            end_session=True
         ))
         return
     n = len((res or {}).get("sources") or [])
-    suffix = f"\n\n_(grounded in {n} of your journal entries)_" if n else ""
+    suffix = f"\n\nDetails\n* Grounded in {n} journal entr{'y' if n == 1 else 'ies'}." if n else ""
     await ctx.send(user, make_chat(answer + suffix, end_session=True))
 
 
-async def _handle_action(ctx: Context, user: str, user_id: str, message: str, agent: str):
+async def _handle_action(
+    ctx: Context,
+    user: str,
+    user_id: str,
+    message: str,
+    agent: str,
+    booking_intent: str = "general",
+):
     """Domain request → the specialist that owns it."""
     addr = config.address_for(agent)
     if not addr:
@@ -257,17 +341,25 @@ async def _handle_action(ctx: Context, user: str, user_id: str, message: str, ag
             await ctx.send(user, make_chat(summary or "Done.", end_session=True))
         else:  # logistics / scout need their agent running
             await ctx.send(user, make_chat(
-                f"The {agent} agent isn't connected yet.", end_session=True
+                "Summary\n"
+                f"The {agent} capability is not connected yet.\n\n"
+                "Next Step\n"
+                "Start that agent, then ask again.",
+                end_session=True
             ))
         return
     # Logistics is interactive (it runs its own multi-step flights/hotels/
     # tournament-pick conversation), so kick it off and point the athlete to it
     # rather than waiting for a single one-shot result.
     if agent == "logistics":
-        await ctx.send(addr, make_chat(encode_envelope(user_id, message)))
+        await ctx.send(addr, make_chat(encode_envelope(
+            user_id, message, bookingIntent=booking_intent
+        )))
         await ctx.send(user, make_chat(
-            "🧳 I've handed that to the Logistics agent — it'll walk you through "
-            "tournaments, flights, and hotels. Chat it directly to pick options.",
+            "Summary\n"
+            "Logistics is ready to walk through the booking category you asked for.\n\n"
+            "Next Step\n"
+            "Chat with Logistics directly to pick an option and continue to payment.",
             end_session=True,
         ))
         return
@@ -287,7 +379,7 @@ async def _on_new_dump(ctx: Context, sender: str, env: dict):
         return
     req_id = uuid4().hex
     _save(ctx, req_id, {"user": sender, "user_id": user_id, "pending": None, "summaries": []})
-    await ctx.send(sender, make_chat("🧭 On it — classifying and filing your notes…"))
+    await ctx.send(sender, make_chat("Working on it. I am classifying and filing your note."))
     await ctx.send(config.LIBRARIAN_ADDRESS, make_chat(
         encode_envelope(user_id, dump, kind="classify", req_id=req_id)
     ))
@@ -313,7 +405,13 @@ async def _on_classify_result(ctx: Context, env: dict):
         sent += 1
 
     if sent == 0:
-        await ctx.send(state["user"], make_chat("Done — filed and routed.", end_session=True))
+        await ctx.send(state["user"], make_chat(
+            "Summary\n"
+            "Filed and routed your note.\n\n"
+            "Next Step\n"
+            "Open the dashboard to review the updated sections.",
+            end_session=True
+        ))
         _drop(ctx, req_id)
         return
     state["pending"] = sent
@@ -330,7 +428,8 @@ async def _on_result(ctx: Context, env: dict):
     state["pending"] = (state.get("pending") or 1) - 1
     if state["pending"] <= 0:
         await ctx.send(state["user"], make_chat(
-            "\n".join(state["summaries"]) or "Done.", end_session=True
+            "\n\n".join(state["summaries"]) or "Summary\nDone.",
+            end_session=True
         ))
         _drop(ctx, req_id)
     else:

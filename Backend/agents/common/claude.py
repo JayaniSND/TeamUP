@@ -18,6 +18,7 @@ import logging
 
 import anthropic
 
+from .booking_intent import BOOKING_INTENTS, classify_booking_intent
 from . import config
 
 log = logging.getLogger("claude")
@@ -84,7 +85,17 @@ _INTENT_SYSTEM = (
     "    recovery    — body/fatigue/overtraining ('am I overtrained', 'how's my body')\n"
     "    performance — win/loss or form summaries ('how am I performing')\n"
     "    sponsorship — sponsor fit or outreach drafting ('find sponsors', 'draft outreach')\n"
-    "    logistics   — tournaments/travel/calendar ('find a tournament', 'add to calendar')\n"
+    "    logistics   — tournaments/travel/calendar/flights/hotels/booking fees "
+    "('find a tournament', 'book flight', 'find hotel', 'show service fee', "
+    "'add to calendar')\n"
+    "For logistics booking requests, also set bookingIntent to exactly one of: "
+    "flight_only, hotel_only, flight_hotel, fee_only, general. Examples: "
+    "'book flight', 'find flight', 'flight to match', 'plane ticket', 'airfare' "
+    "=> flight_only; 'book hotel', 'find hotel', 'stay near match', "
+    "'accommodation', 'room' => hotel_only; 'book flight and hotel', "
+    "'find travel package', 'plan the trip', 'travel and stay' => flight_hotel; "
+    "'how much is the fee', 'show fee', 'payment fee', 'service fee' => fee_only. "
+    "Use general when no specific booking category is requested.\n"
     "When unsure between 'ask' and 'action', prefer 'ask'. Only use 'log' when the "
     "athlete is clearly reporting events, not asking a question."
 )
@@ -97,18 +108,24 @@ _INTENT_SCHEMA = {
             "type": "string",
             "enum": ["recovery", "performance", "sponsorship", "logistics", "none"],
         },
+        "bookingIntent": {"type": "string", "enum": list(BOOKING_INTENTS)},
     },
-    "required": ["intent", "agent"],
+    "required": ["intent", "agent", "bookingIntent"],
     "additionalProperties": False,
 }
 
 
 def _classify_intent_sync(message: str) -> dict:
-    return _structured(config.CLASSIFY_MODEL, _INTENT_SYSTEM, message, _INTENT_SCHEMA, 256)
+    routed = _structured(config.CLASSIFY_MODEL, _INTENT_SYSTEM, message, _INTENT_SCHEMA, 256)
+    routed["bookingIntent"] = classify_booking_intent(message, routed.get("bookingIntent"))
+    if routed["bookingIntent"] != "general":
+        routed["intent"] = "action"
+        routed["agent"] = "logistics"
+    return routed
 
 
 async def classify_intent(message: str) -> dict:
-    """Return {'intent': log|ask|action, 'agent': recovery|...|none}."""
+    """Return {'intent': log|ask|action, 'agent': recovery|...|none, 'bookingIntent': ...}."""
     return await asyncio.to_thread(_classify_intent_sync, message)
 
 

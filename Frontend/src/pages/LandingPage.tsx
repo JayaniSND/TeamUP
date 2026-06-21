@@ -140,7 +140,7 @@ export default function LandingPage() {
               <span className="grid size-7 place-items-center rounded-full bg-[#6FCF97]/18 text-[#6FCF97]">
                 <Sparkles className="size-3.5" />
               </span>
-              AthleteOS
+              SportsMom
             </div>
             <Link
               to="/dashboard"
@@ -156,7 +156,7 @@ export default function LandingPage() {
             <div className="hero-copy copy-3">Messy training notes become structured data.</div>
 
             <div className="product-reveal-copy absolute left-0 top-[12%] max-w-[27rem] opacity-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9de5ba]">Athlete Analytics OS</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9de5ba]">SportsMom</p>
               <h1 className="mt-3 text-balance text-4xl font-semibold leading-[1.04] tracking-tight text-white sm:text-5xl">
                 The athlete dashboard that builds itself from your logs.
               </h1>

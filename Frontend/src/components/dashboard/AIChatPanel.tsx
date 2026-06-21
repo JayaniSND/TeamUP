@@ -23,7 +23,7 @@ export const AIChatPanel = memo(function AIChatPanel({
   /** an externally triggered question (e.g. a section's Ask-AI button) */
   seed?: ChatSeed | null;
 }) {
-  const { messages, input, setInput, loading, send, submit, book, bookingBusy } = useChatSession({
+  const { messages, input, setInput, loading, send, submit, book, bookingBusy, paidBookingKeys } = useChatSession({
     seed,
     mode: "dashboard",
   });
@@ -73,6 +73,7 @@ export const AIChatPanel = memo(function AIChatPanel({
         onSend={send}
         onBook={book}
         bookingBusy={bookingBusy}
+        paidBookingKeys={paidBookingKeys}
         variant="compact"
       />
 

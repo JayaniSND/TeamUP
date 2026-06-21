@@ -64,7 +64,7 @@ export const Sidebar = memo(function Sidebar({
             <Hexagon className="size-5" strokeWidth={2} />
           </span>
           <div className="hidden min-w-0 leading-tight xl:block">
-            <div className="truncate text-sm font-semibold tracking-tight text-white">AthleteOS</div>
+            <div className="truncate text-sm font-semibold tracking-tight text-white">SportsMom</div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">Analytics</div>
           </div>
         </div>
