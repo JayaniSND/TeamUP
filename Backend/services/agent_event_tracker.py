@@ -33,7 +33,6 @@ import inspect
 import logging
 import time
 import uuid
-from collections import deque
 from typing import Any, Callable
 
 log = logging.getLogger("agent_event_tracker")
@@ -95,14 +94,34 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+# Key fragments that must NEVER reach the frontend trace, even as a short scalar.
+# _safe_meta already drops large/structured values (prompts, rows, responses);
+# this is the second guard so a caller can't leak a secret by passing it under a
+# small key (task §"Privacy": no private tokens, prompts, payment/Stripe secrets,
+# or PII). Checked against every real call site — drops nothing legitimate.
+_SENSITIVE_KEY_PARTS = (
+    "token", "secret", "password", "passwd", "apikey", "api_key",
+    "authorization", "credential", "cookie", "prompt", "email",
+    "ssn", "cvv", "card", "stripe",
+)
+
+
+def _is_sensitive_key(key: str) -> bool:
+    k = str(key).lower()
+    return any(part in k for part in _SENSITIVE_KEY_PARTS)
+
+
 def _safe_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
     """Keep only small, non-sensitive scalars. Counts and short labels are fine;
-    anything large or structured (prompts, rows, responses) is dropped so it can
-    never leak to the frontend trace."""
+    anything large or structured (prompts, rows, responses) is dropped, and any
+    field whose KEY looks sensitive is dropped outright — so a token/secret can
+    never reach the frontend trace even if a caller passes one."""
     if not meta:
         return {}
     safe: dict[str, Any] = {}
     for key, value in meta.items():
+        if _is_sensitive_key(key):
+            continue  # never forward sensitive-looking fields, even short scalars
         if isinstance(value, bool) or isinstance(value, (int, float)):
             safe[str(key)] = value
         elif isinstance(value, str) and len(value) <= 48:
@@ -291,10 +310,13 @@ def start_flow(
         tracker.message_id = message_id or tracker.message_id
         tracker.session_id = session_id or tracker.session_id
         tracker.ended_at = None
-    # Bound the registry FIFO so a long-lived server never leaks flows.
-    if len(_FLOWS) >= _MAX_FLOWS:
-        for old in deque(_FLOWS.keys(), maxlen=1):
-            _FLOWS.pop(old, None)
+    # Bound the registry so a long-lived server never leaks flows: when full and
+    # this is a genuinely new flow, evict the OLDEST (dict preserves insertion
+    # order). Reusing an existing flow_id doesn't grow the registry, so skip then.
+    if len(_FLOWS) >= _MAX_FLOWS and tracker.flow_id not in _FLOWS:
+        oldest = next(iter(_FLOWS), None)
+        if oldest is not None:
+            _FLOWS.pop(oldest, None)
     _FLOWS[tracker.flow_id] = tracker
     tracker._token = _current.set(tracker)  # type: ignore[attr-defined]
     return tracker
