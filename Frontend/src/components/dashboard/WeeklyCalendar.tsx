@@ -36,9 +36,11 @@ const LEGEND: { kind: CalendarSlotKind; label: string }[] = [
 export const WeeklyCalendar = memo(function WeeklyCalendar({
   calendar,
   onAddCalendar,
+  onOpenCalendar,
 }: {
   calendar: WeekCalendar;
   onAddCalendar?: () => void;
+  onOpenCalendar?: () => void;
 }) {
   const counts = useMemo(() => {
     const acc: Partial<Record<CalendarSlotKind, number>> = {};
@@ -52,8 +54,10 @@ export const WeeklyCalendar = memo(function WeeklyCalendar({
       title="Weekly Calendar"
       subtitle={calendar.rangeLabel}
       icon={CalendarDays}
-      action="Add to calendar"
-      onAction={onAddCalendar}
+      action={onOpenCalendar ? "Open calendar" : "Add to calendar"}
+      onAction={onOpenCalendar ?? onAddCalendar}
+      onCardClick={onOpenCalendar}
+      cardAriaLabel="Open monthly calendar"
       delay={0.04}
       className="h-full"
     >

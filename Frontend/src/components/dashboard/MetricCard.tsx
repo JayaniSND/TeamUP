@@ -12,9 +12,13 @@ import type { OverviewMetric } from "@/types/athlete";
 export const MetricCard = memo(function MetricCard({
   metric,
   delay = 0,
+  onClick,
+  ariaLabel,
 }: {
   metric: OverviewMetric;
   delay?: number;
+  onClick?: () => void;
+  ariaLabel?: string;
 }) {
   const Icon = resolveIcon(metric.icon);
   const s = statusStyles[metric.status];
@@ -26,23 +30,14 @@ export const MetricCard = memo(function MetricCard({
         : metric.status === "ai"
           ? "grad-sky"
           : "bg-white";
-  return (
-    <div
-      style={delay ? { animationDelay: `${delay}s` } : undefined}
-      className={cn("glass-card card-hover fade-up group relative min-h-[104px] overflow-hidden rounded-[1.45rem] p-3.5", gradient)}
-    >
+
+  const content = (
+    <>
       <div className="mesh-lines pointer-events-none absolute inset-0 opacity-25" />
       <div className={cn("pointer-events-none absolute -right-8 -top-8 size-24 rounded-full opacity-45", s.bg)} />
       <div className="relative flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-[0.18em] text-text-muted">{metric.label}</span>
-        <span
-          className={cn(
-            "grid size-8 place-items-center rounded-xl ring-1 backdrop-blur-md",
-            s.bg,
-            s.text,
-            s.ring
-          )}
-        >
+        <span className={cn("grid size-8 place-items-center rounded-xl ring-1 backdrop-blur-md", s.bg, s.text, s.ring)}>
           <Icon className="size-4" strokeWidth={2} />
         </span>
       </div>
@@ -53,6 +48,32 @@ export const MetricCard = memo(function MetricCard({
           <span className="truncate text-text-dim">{metric.detail}</span>
         </div>
       </div>
+    </>
+  );
+
+  const className = cn(
+    "glass-card card-hover fade-up group relative min-h-[104px] overflow-hidden rounded-[1.45rem] p-3.5 text-left",
+    onClick && "w-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35",
+    gradient
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={ariaLabel ?? metric.label}
+        style={delay ? { animationDelay: `${delay}s` } : undefined}
+        className={className}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div style={delay ? { animationDelay: `${delay}s` } : undefined} className={className}>
+      {content}
     </div>
   );
 });

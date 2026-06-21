@@ -24,7 +24,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "calendar", label: "Calendar", icon: CalendarDays },
+  { id: "calendar", label: "Calendar", icon: CalendarDays, to: "/calendar" },
   { id: "performance", label: "Trend", icon: TrendingUp },
   { id: "recovery", label: "Recovery", icon: HeartPulse },
   { id: "upload", label: "Upload", icon: UploadCloud, to: "/upload" },

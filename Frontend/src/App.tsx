@@ -39,13 +39,13 @@ export default function App() {
 
   const closeChat = useCallback(() => setChatOpen(false), []);
   const openChat = useCallback(() => setChatOpen(true), []);
+  const openCalendar = useCallback(() => navigate("/calendar"), [navigate]);
 
   const h = useMemo(
     () => ({
       overview: () => askAI("What should I focus on next week?", "p1"),
       explainTrend: () => askAI("Explain my recent performance trend.", "p6"),
       recovery: () => askAI("Check my recovery risk.", "p3"),
-      calendar: () => askAI("Add this week's plan to my calendar.", "p9"),
       agent: (prompt: string, replyId?: string) => askAI(prompt, replyId),
     }),
     [askAI]
@@ -55,6 +55,10 @@ export default function App() {
 
   const onSelect = useCallback(
     (id: string) => {
+      if (id === "calendar") {
+        navigate("/calendar");
+        return;
+      }
       if (id === "upload") {
         navigate("/upload");
         return;
@@ -119,7 +123,7 @@ export default function App() {
                 <div className="board-surface grid min-h-0 grid-cols-1 gap-3 rounded-[1.6rem] p-2.5 lg:h-full xl:grid-cols-12 xl:grid-rows-[auto_minmax(0,1fr)_auto]">
                   {/* Top band — high-impact KPIs + next agent action */}
                   <div id="overview" className="scroll-mt-24 xl:col-span-8 lg:scroll-mt-8">
-                    <OverviewCards metrics={data.overview} />
+                    <OverviewCards metrics={data.overview} onCalendarOpen={openCalendar} />
                   </div>
 
                   <div className="xl:col-span-4">
@@ -128,7 +132,7 @@ export default function App() {
 
                   {/* Center band — the Weekly Calendar is the focus and grows to fill */}
                   <div className="min-h-[280px] xl:col-span-12 xl:min-h-0">
-                    <WeeklyCalendar calendar={data.weeklyCalendar} onAddCalendar={h.calendar} />
+                    <WeeklyCalendar calendar={data.weeklyCalendar} onOpenCalendar={openCalendar} />
                   </div>
 
                   {/* Bottom band — Performance + Recovery, secondary */}
