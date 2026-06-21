@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Loader2, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
+import { Markdown } from "@/components/dashboard/Markdown";
 import type { BookingOption, ChatMessage } from "@/types/athlete";
 
 type Variant = "compact" | "full";
@@ -62,7 +63,9 @@ export function ChatThread({
         >
           <div
             className={cn(
-              "box-border min-w-0 whitespace-pre-wrap break-words rounded-2xl leading-relaxed shadow-[inset_0_1px_0_rgba(255,255,255,0.58)] [overflow-wrap:anywhere] [word-break:break-word]",
+              "box-border min-w-0 break-words rounded-2xl leading-relaxed shadow-[inset_0_1px_0_rgba(255,255,255,0.58)] [overflow-wrap:anywhere] [word-break:break-word]",
+              // user/error: preserve their literal text; assistant: rendered markdown handles its own layout
+              m.role === "user" || m.isError ? "whitespace-pre-wrap" : "whitespace-normal",
               full ? "max-w-[88%] px-4 py-3 text-sm sm:max-w-[80%]" : "max-w-[85%] px-3.5 py-2.5 text-xs",
               m.role === "user"
                 ? "bg-accent/10 text-text ring-1 ring-accent/18"
@@ -76,7 +79,7 @@ export function ChatThread({
                 ⚠️
               </span>
             )}
-            {m.text}
+            {m.role === "user" || m.isError ? m.text : <Markdown text={m.text} />}
             {(m.agents?.length || m.sources?.length) && (
               <div className="mt-2 flex flex-wrap items-center gap-1">
                 {m.agents?.map((a) => (
