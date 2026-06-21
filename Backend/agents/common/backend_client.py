@@ -64,6 +64,11 @@ async def create_sponsorship_opportunity(user_id, opp: dict):
     return (res or {}).get("opportunity_id")
 
 
+async def create_calendar_event(user_id, event: dict):
+    res = await _post("/calendar/add", {"user_id": user_id, **event})
+    return (res or {}).get("event_id")
+
+
 # ── reads ──────────────────────────────────────────────────────────
 async def recent_entries(user_id, section=None, limit=10) -> list[dict]:
     params = {"user_id": user_id, "limit": limit}

@@ -93,7 +93,12 @@ _CLASSIFY_SYSTEM = (
     "analytics dashboard. Split the athlete's raw input (voice transcript, "
     "typed note, or transcribed notebook page) into discrete entries. Each "
     "entry is one coherent thought filed under exactly one section. Preserve "
-    "meaning; lightly clean filler words; do not invent content."
+    "meaning; lightly clean filler words; do not invent content.\n"
+    "Section guidance: file any mention of a specific tournament, competition, "
+    "match to attend, travel, or scheduling under `logistics` — even when the "
+    "athlete phrases it as wanting to enter/sign up. Use `goals` ONLY for "
+    "aspirational targets (e.g. 'win a regional title', 'get my serve above 90 "
+    "mph'), not concrete events to put on a calendar."
 )
 
 _CLASSIFY_SCHEMA = {
@@ -304,3 +309,81 @@ async def suggest_sponsorship(note, profile, matches, metrics, media) -> dict:
     return await asyncio.to_thread(
         _suggest_sponsorship_sync, note, profile, matches, metrics, media
     )
+
+
+# ── Logistics: extract a tournament from scraped/cached page text ──
+_TOURNEY_SYSTEM = (
+    "You are the Logistics agent for an individual athlete. From the raw web "
+    "page text of a tournament finder (and the athlete's note), extract the ONE "
+    "most relevant upcoming tournament near the requested location/date window. "
+    "Return clean structured fields. If the text has no real event, set name to "
+    "'' and explain in summary."
+)
+
+_TOURNEY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "location": {"type": "string"},
+        "start_date": {"type": "string"},   # ISO date if known, else ''
+        "end_date": {"type": "string"},
+        "venue": {"type": "string"},
+        "url": {"type": "string"},
+        "summary": {"type": "string"},
+    },
+    "required": ["name", "location", "start_date", "end_date", "venue", "url", "summary"],
+    "additionalProperties": False,
+}
+
+
+def _extract_tournament_sync(note, page_text) -> dict:
+    ctx = {"athlete_note": note, "page_text": page_text}
+    return _structured(
+        config.SYNTHESIS_MODEL,
+        _TOURNEY_SYSTEM,
+        "Extract the best-matching tournament:\n" + json.dumps(ctx, indent=2),
+        _TOURNEY_SCHEMA,
+        800,
+    )
+
+
+async def extract_tournament(note, page_text) -> dict:
+    return await asyncio.to_thread(_extract_tournament_sync, note, page_text)
+
+
+# ── Scout: summarize an opponent from scraped/cached page text ─────
+_SCOUT_SYSTEM = (
+    "You are the Scout agent for an individual athlete. From the raw web page "
+    "text of an opponent's recent results/profile (and the athlete's note), "
+    "summarize the opponent's playing patterns, strengths, weaknesses, and ONE "
+    "concrete tactical recommendation the athlete can use. Ground claims in the "
+    "text; if information is thin, say so."
+)
+
+_SCOUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "opponent": {"type": "string"},
+        "patterns": {"type": "string"},
+        "strengths": {"type": "string"},
+        "weaknesses": {"type": "string"},
+        "tactical_recommendation": {"type": "string"},
+    },
+    "required": ["opponent", "patterns", "strengths", "weaknesses", "tactical_recommendation"],
+    "additionalProperties": False,
+}
+
+
+def _scout_opponent_sync(note, page_text) -> dict:
+    ctx = {"athlete_note": note, "page_text": page_text}
+    return _structured(
+        config.SYNTHESIS_MODEL,
+        _SCOUT_SYSTEM,
+        "Summarize the opponent and give a tactical edge:\n" + json.dumps(ctx, indent=2),
+        _SCOUT_SCHEMA,
+        900,
+    )
+
+
+async def scout_opponent(note, page_text) -> dict:
+    return await asyncio.to_thread(_scout_opponent_sync, note, page_text)

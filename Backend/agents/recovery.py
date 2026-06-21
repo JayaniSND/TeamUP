@@ -112,19 +112,19 @@ async def _assess(user_id: str, note: str) -> dict:
 
 
 async def _chain(ctx: Context, user_id: str, verdict: dict):
-    """Agent chaining (v5 §6.2): a detected arc fires the next agent."""
+    """Agent chaining (v5 §6.2): a detected arc suggests the next agent.
+
+    The chain suggestion is surfaced in the reply text (the ➡️ line) rather than
+    auto-dispatched: the downstream agents (esp. the interactive Logistics agent)
+    run their own multi-step conversations, so a fire-and-forget cross-agent send
+    would either be dropped or loop. Surfacing keeps the recommendation visible
+    and lets the athlete pick it up with the right agent directly.
+    """
     target = verdict.get("chain_to", "none")
-    if target in ("none", ""):
-        return
-    addr = config.address_for(target)
-    if not addr:
-        return  # target agent not configured — chain note still shows in the reply
-    msg = verdict.get("chain_message") or verdict.get("pattern_summary", "")
-    ctx.logger.info("Recovery chaining %s → %s", verdict.get("pattern_type"), target)
-    try:
-        await ctx.send(addr, make_chat(encode_envelope(user_id, msg)))
-    except Exception as e:  # noqa: BLE001 - chaining is best-effort, never block the reply
-        ctx.logger.warning("chain to %s failed: %s", target, e)
+    if target not in ("none", ""):
+        ctx.logger.info(
+            "Recovery suggests chaining %s → %s", verdict.get("pattern_type"), target
+        )
 
 
 @chat_proto.on_message(ChatMessage)
