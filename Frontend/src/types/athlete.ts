@@ -116,6 +116,33 @@ export interface CalendarEvent {
   kind: "match" | "tournament" | "travel" | "training";
 }
 
+/** What a single block on the weekly calendar represents. */
+export type CalendarSlotKind = "training" | "match" | "recovery" | "travel" | "tournament";
+
+/** One scheduled block inside a day of the weekly calendar. */
+export interface CalendarSlot {
+  id: string;
+  title: string;
+  time: string;
+  kind: CalendarSlotKind;
+}
+
+/** A single day column in the weekly calendar. */
+export interface WeekDay {
+  day: string; // short label e.g. "Mon"
+  date: number; // day of month
+  today?: boolean;
+  slots: CalendarSlot[];
+}
+
+/** The weekly calendar — the dashboard's centerpiece. */
+export interface WeekCalendar {
+  rangeLabel: string; // e.g. "Jun 15 – Jun 21 · This week"
+  upcomingLabel: string; // e.g. "Next week"
+  upcoming: string[]; // short look-ahead chips
+  days: WeekDay[];
+}
+
 export interface SponsorshipLead {
   id: string;
   brand: string;
@@ -167,6 +194,7 @@ export interface AthleteData {
   matches: MatchResult[];
   form: FormMatch[];
   recovery: RecoverySignal;
+  weeklyCalendar: WeekCalendar;
   schedule: {
     events: CalendarEvent[];
     travelChecklist: { id: string; label: string; done: boolean }[];

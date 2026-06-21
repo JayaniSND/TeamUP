@@ -19,12 +19,12 @@ export const Hero = memo(function Hero({
   return (
     <section className="glass-card fade-up relative min-h-[360px] overflow-hidden rounded-[2.15rem] p-5 sm:p-7">
       <div className="mesh-lines pointer-events-none absolute inset-0 opacity-60" />
-      <div className="pointer-events-none absolute inset-x-8 bottom-0 h-20 bg-gradient-to-t from-sky-300/12 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-8 bottom-0 h-20 bg-gradient-to-t from-accent/12 to-transparent" />
       <div className="pointer-events-none absolute bottom-8 left-8 right-8 hidden h-28 items-end gap-2 opacity-55 sm:flex">
         {[34, 48, 42, 70, 52, 86, 74, 96, 78, 66, 88, 58].map((h, i) => (
           <span
             key={i}
-            className="flex-1 rounded-t-xl bg-gradient-to-t from-white/10 via-cyan-100/24 to-pink-200/42 shadow-[0_0_20px_rgba(205,231,255,0.16)]"
+            className="flex-1 rounded-t-xl bg-gradient-to-t from-white/10 via-lime/24 to-accent/42 shadow-[0_0_20px_rgba(111,207,151,0.16)]"
             style={{ height: `${h}%` }}
           />
         ))}

@@ -19,7 +19,7 @@ export const RecoveryPanel = memo(function RecoveryPanel({
   return (
     <section
       id="recovery"
-      className="glass-card fade-up min-h-0 overflow-hidden rounded-[1.45rem] p-3"
+      className="glass-card fade-up flex h-full min-h-0 flex-col overflow-hidden rounded-[1.45rem] p-3"
       style={{ animationDelay: "0.1s" }}
     >
       <header className="mb-2 flex items-start justify-between gap-2">
@@ -86,7 +86,7 @@ export const RecoveryPanel = memo(function RecoveryPanel({
               <span
                 key={d.day}
                 title={`${d.day}: ${d.value}`}
-                className="flex-1 rounded-t bg-gradient-to-t from-[#2563eb]/70 to-[#38bdf8]/70 shadow-[0_0_10px_rgba(37,99,235,0.16)]"
+                className="flex-1 rounded-t bg-gradient-to-t from-[#B9861E]/70 to-[#E0B84A]/70 shadow-[0_0_10px_rgba(185,134,30,0.16)]"
                 style={{ height: `${Math.max(18, d.value)}%` }}
               />
             ))}
@@ -95,7 +95,7 @@ export const RecoveryPanel = memo(function RecoveryPanel({
       </div>
 
       {insight && (
-        <div className="mt-2 truncate rounded-xl bg-accent/[0.06] px-2.5 py-1.5 text-[10px] leading-relaxed text-text-muted ring-1 ring-ai/16">
+        <div className="mt-auto truncate rounded-xl bg-accent/[0.06] px-2.5 py-1.5 text-[10px] leading-relaxed text-text-muted ring-1 ring-ai/16">
           <span className="font-semibold text-ai">Suggested adjustment · </span>
           {insight.suggestion}
         </div>

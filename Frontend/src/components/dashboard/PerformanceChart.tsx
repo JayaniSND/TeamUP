@@ -15,17 +15,16 @@ import type { PerformancePoint } from "@/types/athlete";
 
 type SeriesKey = "trainingLoad" | "recoveryScore" | "matchPerformance";
 
-const CHART_LOAD = "#2563EB";
-const CHART_RECOVERY = "#06B6D4";
-const CHART_MATCH = "#4F46E5";
-const CHART_GRID = "rgba(100,116,139,0.14)";
-const CHART_TICK = "rgba(51,65,85,0.62)";
-const CHART_CURSOR = "rgba(37,99,235,0.24)";
+const CHART_LOAD = "#2FA084";
+const CHART_RECOVERY = "#6FCF97";
+const CHART_MATCH = "#1F6F5F";
+const CHART_GRID = "rgba(64,104,88,0.14)";
+const CHART_TICK = "rgba(51,75,67,0.6)";
+const CHART_CURSOR = "rgba(47,160,132,0.22)";
 
 const SERIES: { key: SeriesKey; label: string; color: string }[] = [
   { key: "trainingLoad", label: "Training Load", color: CHART_LOAD },
   { key: "recoveryScore", label: "Recovery", color: CHART_RECOVERY },
-  { key: "matchPerformance", label: "Match", color: CHART_MATCH },
 ];
 
 function ChartTooltip({ active, payload, label }: any) {
@@ -48,9 +47,9 @@ function ChartTooltip({ active, payload, label }: any) {
 
 function Stat({ label, value, accent }: { label: string; value: string; accent: string }) {
   return (
-    <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-text-dim">{label}</div>
-      <div className="tnum mt-0.5 text-lg font-bold drop-shadow-[0_0_12px_rgba(59,130,246,0.22)]" style={{ color: accent }}>
+    <div className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap">
+      <div className="text-[9px] font-semibold uppercase tracking-wider text-text-dim">{label}</div>
+      <div className="tnum text-sm font-bold leading-none" style={{ color: accent }}>
         {value}
       </div>
     </div>
@@ -59,10 +58,10 @@ function Stat({ label, value, accent }: { label: string; value: string; accent: 
 
 export const PerformanceChart = memo(function PerformanceChart({
   data,
-  onAction,
+  onExplainTrend,
 }: {
   data: PerformancePoint[];
-  onAction: () => void;
+  onExplainTrend?: () => void;
 }) {
   // summary stats — computed once per data change, never per render
   const stats = useMemo(() => {
@@ -82,20 +81,19 @@ export const PerformanceChart = memo(function PerformanceChart({
       subtitle="Load, recovery, match form · last 7 days"
       icon={TrendingUp}
       action="Explain trend"
-      onAction={onAction}
+      onAction={onExplainTrend}
       delay={0.05}
       className="h-full"
     >
       <div className="flex h-full min-h-0 flex-col">
-        <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2">
-          <div className="glass-inset flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2 rounded-[1.15rem] px-3 py-2">
+        <div className="mb-2 flex shrink-0 flex-nowrap items-center gap-2">
+          <div className="glass-inset flex shrink-0 flex-nowrap items-center gap-x-3 rounded-full px-3 py-1.5">
             <Stat label="Avg Load" value={String(stats.load)} accent={CHART_LOAD} />
             <Stat label="Avg Recovery" value={String(stats.recovery)} accent={CHART_RECOVERY} />
-            <Stat label="Peak Match" value={String(stats.match)} accent={CHART_MATCH} />
           </div>
-          <div className="flex shrink-0 flex-wrap gap-1.5 text-[11px] font-semibold text-text-muted">
+          <div className="flex shrink-0 flex-nowrap gap-1.5 text-[11px] font-semibold text-text-muted">
             {SERIES.map((s) => (
-              <span key={s.key} className="glass-chip inline-flex items-center gap-1.5 rounded-full px-2 py-1">
+              <span key={s.key} className="glass-chip inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-1">
                 <span className="size-1.5 rounded-full" style={{ background: s.color }} />
                 {s.label}
               </span>
@@ -103,7 +101,7 @@ export const PerformanceChart = memo(function PerformanceChart({
           </div>
         </div>
 
-        <div className="glass-inset min-h-[190px] flex-1 overflow-hidden rounded-[1.2rem] p-2.5">
+        <div className="glass-inset min-h-[120px] flex-1 overflow-hidden rounded-[1.2rem] p-2.5">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data} margin={{ top: 8, right: 10, left: -18, bottom: 4 }}>
               <defs>
