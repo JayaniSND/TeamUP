@@ -48,7 +48,7 @@ def _format(v: dict) -> str:
     )
 
 
-async def _analyze(user_id: str, note: str) -> dict:
+async def _analyze(ctx: Context, user_id: str, note: str) -> dict:
     matches = await backend.recent_match_results(user_id, limit=10)
     training = await backend.recent_training(user_id, limit=10)
     metrics = await backend.recent_metrics(user_id, limit=20)
@@ -61,6 +61,26 @@ async def _analyze(user_id: str, note: str) -> dict:
         severity="info",
         recommended_action=v.get("recommended_focus", ""),
     )
+
+    # Chain to Coaching when a consistent weak area is identified.
+    # Coaching will then advise on technique and potentially chain to Fitness.
+    weakest = v.get("weakest_area", "").strip()
+    if weakest and v.get("trend") in ("declining", "steady"):
+        coaching_addr = config.address_for("coaching")
+        if coaching_addr:
+            chain_note = (
+                f"[Performance→Coaching chain] Consistent weak area: {weakest}. "
+                f"Trend: {v.get('trend')}. {v.get('summary', '')} "
+                f"Recommend targeted coaching to address this gap."
+            )
+            await ctx.send(coaching_addr, make_chat(
+                encode_envelope(user_id, chain_note, kind="run", source="performance")
+            ))
+            ctx.logger.info(
+                "Performance chained → Coaching (weakness=%s, trend=%s)",
+                weakest, v.get("trend"),
+            )
+
     return v
 
 
@@ -78,7 +98,7 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     if not raw.strip():
         return
     env = decode_envelope(raw, config.DEFAULT_USER_ID)
-    v = await _analyze(env["user_id"], env["text"])
+    v = await _analyze(ctx, env["user_id"], env["text"])
     summary = _format(v)
     ctx.logger.info("Performance trend=%s for %s", v.get("trend"), env["user_id"])
 

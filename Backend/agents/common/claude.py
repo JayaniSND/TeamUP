@@ -387,3 +387,157 @@ def _scout_opponent_sync(note, page_text) -> dict:
 
 async def scout_opponent(note, page_text) -> dict:
     return await asyncio.to_thread(_scout_opponent_sync, note, page_text)
+
+
+# ── Fitness: adjusted workout plan ────────────────────────────────
+# Called by the Fitness agent when it receives a direct message OR when
+# Recovery chains to it with an injury/fatigue signal. Reads training
+# history + recovery state and outputs a concrete modified week of training.
+_FITNESS_SYSTEM = (
+    "You are the Fitness agent for an individual athlete. Your job is to "
+    "adjust the athlete's upcoming training plan based on their current "
+    "physical state — injuries, fatigue, soreness, and load trends from "
+    "their journal. You receive recent training sessions, recovery logs, "
+    "journal entries, and an optional trigger from the Recovery agent "
+    "(which detected a physical or overtraining pattern).\n\n"
+    "Produce a concrete adjusted training plan for the next 7 days. Be "
+    "specific: name the days, the session type, the intensity level, and "
+    "the reason for any reduction or modification. If an injury area is "
+    "flagged, explicitly avoid loading that area and name a substitute. "
+    "If the athlete is fresh and load is low, you may suggest safely "
+    "increasing volume. Always anchor recommendations in what the athlete "
+    "actually logged — do not invent data. This is training guidance, "
+    "not medical advice."
+)
+
+_FITNESS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "trigger": {
+            "type": "string",
+            "enum": ["injury_flag", "fatigue_flag", "routine_check", "load_spike"],
+        },
+        "summary": {"type": "string"},
+        "adjusted_plan": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "day": {
+                        "type": "string",
+                        "enum": ["Monday","Tuesday","Wednesday","Thursday",
+                                 "Friday","Saturday","Sunday"],
+                    },
+                    "session_type": {"type": "string"},
+                    "intensity": {"type": "string", "enum": ["rest", "low", "moderate", "high"]},
+                    "focus": {"type": "string"},
+                    "session_length_minutes": {"type": "integer"},
+                    "modification_reason": {"type": "string"},
+                },
+                "required": [
+                    "day", "session_type", "intensity", "focus",
+                    "session_length_minutes", "modification_reason",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "avoided_areas": {"type": "array", "items": {"type": "string"}},
+        "recommended_action": {"type": "string"},
+    },
+    "required": ["trigger", "summary", "adjusted_plan", "avoided_areas", "recommended_action"],
+    "additionalProperties": False,
+}
+
+
+def _suggest_fitness_plan_sync(note, training, recovery_logs, entries, recovery_verdict) -> dict:
+    ctx = {
+        "trigger_note": note,
+        "recovery_verdict": recovery_verdict,   # dict from Recovery agent, may be {}
+        "recent_training_sessions": training,
+        "recent_recovery_logs": recovery_logs,
+        "recent_entries": entries,
+    }
+    return _structured(
+        config.SYNTHESIS_MODEL,
+        _FITNESS_SYSTEM,
+        "Adjust the athlete's training plan based on this data:\n"
+        + json.dumps(ctx, indent=2),
+        _FITNESS_SCHEMA,
+        1200,
+    )
+
+
+# ── Coaching: tactical + technique advice, optionally chains to Fitness ──
+# Triggered by Recovery (injury → strategy adjustment), Scout (opponent
+# exploits a weakness), or Performance (consistent weak area).
+# When the advice has a physical/conditioning component, sets fitness_focus
+# so the Coaching agent knows to chain to Fitness.
+_COACHING_SYSTEM = (
+    "You are the Coaching agent for an individual athlete. You receive context "
+    "from one of three sources and produce targeted tactical and technique advice:\n\n"
+    "• injury_accommodation — Recovery detected an injury or fatigue flag. Advise "
+    "how to adjust playing strategy and technique to protect the injured area while "
+    "staying competitive. E.g. if the shoulder is flagged, suggest reducing serve "
+    "pace and using more slice/chip returns instead of full swings.\n\n"
+    "• weakness_exploitation — Scout found that an opponent consistently targets "
+    "a specific weakness (e.g. backhand). Advise on the tactical adjustments and "
+    "technique cues to defend/counter that pattern in the next match.\n\n"
+    "• performance_gap — Performance analysis shows a consistent underperforming "
+    "area. Advise concrete technique changes and drills to address it.\n\n"
+    "For ALL sources: if the advice has a clear physical/conditioning component "
+    "(e.g. 'needs stronger shoulder rotation', 'backhand requires more hip drive'), "
+    "set fitness_focus to a concise description of what the Fitness agent should "
+    "target (e.g. 'shoulder stability and rotator cuff', 'hip rotation and core "
+    "for backhand power'). Leave fitness_focus empty string if no conditioning "
+    "component is needed. Ground all advice in the supplied data."
+)
+
+_COACHING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "trigger": {
+            "type": "string",
+            "enum": ["injury_accommodation", "weakness_exploitation", "performance_gap"],
+        },
+        "summary": {"type": "string"},
+        "tactical_advice": {"type": "string"},
+        "technique_focus": {"type": "string"},
+        "fitness_focus": {"type": "string"},
+        "recommended_action": {"type": "string"},
+    },
+    "required": [
+        "trigger", "summary", "tactical_advice",
+        "technique_focus", "fitness_focus", "recommended_action",
+    ],
+    "additionalProperties": False,
+}
+
+
+def _coach_strategy_sync(context_type, note, recent_entries, match_results, recovery_verdict) -> dict:
+    ctx = {
+        "context_type": context_type,
+        "trigger_note": note,
+        "recovery_verdict": recovery_verdict or {},
+        "recent_coaching_entries": recent_entries,
+        "recent_match_results": match_results,
+    }
+    return _structured(
+        config.SYNTHESIS_MODEL,
+        _COACHING_SYSTEM,
+        "Provide coaching advice based on this context:\n" + json.dumps(ctx, indent=2),
+        _COACHING_SCHEMA,
+        1024,
+    )
+
+
+async def coach_strategy(context_type, note, recent_entries, match_results, recovery_verdict=None) -> dict:
+    return await asyncio.to_thread(
+        _coach_strategy_sync, context_type, note, recent_entries, match_results, recovery_verdict
+    )
+
+
+async def suggest_fitness_plan(note, training, recovery_logs, entries, recovery_verdict=None) -> dict:
+    return await asyncio.to_thread(
+        _suggest_fitness_plan_sync, note, training, recovery_logs, entries,
+        recovery_verdict or {},
+    )

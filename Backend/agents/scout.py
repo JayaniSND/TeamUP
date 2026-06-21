@@ -54,7 +54,7 @@ def _format(s: dict, source: str) -> str:
     )
 
 
-async def _run(user_id: str, note: str) -> str:
+async def _run(ctx: Context, user_id: str, note: str) -> str:
     # Scraping can block (cloud browser); keep it off the event loop.
     page_text, source = await asyncio.to_thread(tournaments.fetch_opponent_text, note)
     s = await claude.scout_opponent(note, page_text)
@@ -71,6 +71,24 @@ async def _run(user_id: str, note: str) -> str:
         severity="info",
         recommended_action=s.get("tactical_recommendation", ""),
     )
+
+    # Chain to Coaching: opponent exploits a weakness → get tactical + technique advice.
+    coaching_addr = config.address_for("coaching")
+    if coaching_addr and s.get("weaknesses"):
+        chain_note = (
+            f"[Scout→Coaching chain] Opponent {s.get('opponent', '')} "
+            f"exploits: {s.get('weaknesses', '')}. "
+            f"Patterns: {s.get('patterns', '')}. "
+            f"Advise how to defend/counter this in the next match."
+        )
+        await ctx.send(coaching_addr, make_chat(
+            encode_envelope(user_id, chain_note, kind="run", source="scout")
+        ))
+        ctx.logger.info(
+            "Scout chained → Coaching (opponent=%s, weakness=%s)",
+            s.get("opponent"), s.get("weaknesses", "")[:50],
+        )
+
     return _format(s, source)
 
 
@@ -88,7 +106,7 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     if not raw.strip():
         return
     env = decode_envelope(raw, config.DEFAULT_USER_ID)
-    summary = await _run(env["user_id"], env["text"])
+    summary = await _run(ctx, env["user_id"], env["text"])
     ctx.logger.info("Scout handled note for %s", env["user_id"])
 
     if env.get("kind") == "run" and env.get("req_id"):

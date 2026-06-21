@@ -25,6 +25,10 @@ recovery logs, training, and metrics, and asks Claude for two reads:
 It writes insight cards the dashboard surfaces, and dedups repeat alerts within
 72h (Agent Memory).
 
+**When physical risk is medium or high it automatically chains to two agents:**
+- **Fitness Agent** — to adjust the athlete's training plan and avoid loading the flagged area
+- **Coaching Agent** — to advise strategy and technique adjustments that accommodate the injury
+
 ## How to use it
 Send a note like:
 
@@ -34,8 +38,7 @@ or ask:
 
 > "How's my body been?" / "Am I overtrained?"
 
-It replies with a physical risk read (level, body parts, recommendation) and,
-when present, the behavioral pattern + the chained next step.
+It replies with a physical risk read (level, body parts, recommendation) and, when present, the behavioral pattern + the chained next steps. The Fitness and Coaching agents then run in the background and post their own insight cards to the dashboard.
 
 ## Built with
 Fetch.ai uAgents · Agentverse · ASI:One · Anthropic Claude
