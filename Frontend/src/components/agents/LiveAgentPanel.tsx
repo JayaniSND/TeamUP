@@ -4,7 +4,6 @@ import { Workflow } from "lucide-react";
 import { useChatSessionState } from "@/context/ChatSessionContext";
 import { useCalendarEvents } from "@/context/CalendarEventsContext";
 import {
-  resetAgentActivity,
   setAgentActivity,
   getAgentActivitySnapshot,
   useAgentActivity,
@@ -135,7 +134,6 @@ function useLiveAgentActivity() {
           activeAgent: prev.activeAgent ?? "orchestrator",
           nodeStatus: { ...prev.nodeStatus, [prev.activeAgent ?? "orchestrator"]: "error" },
         }));
-        later(resetAgentActivity, 2800);
         return;
       }
 
@@ -149,8 +147,6 @@ function useLiveAgentActivity() {
       const source: AgentActivityState["source"] = hasTrace ? "trace" : "inferred";
       const finalAgents = frames[frames.length - 1].agents;
       const flow = flowLabelFor(finalAgents);
-      // Booking flows keep the formation lit so payment/calendar can extend it.
-      const bookingFlow = !!lastAssistant?.options?.length || finalAgents.includes("logistics");
       const alreadyStreamed =
         hasTrace &&
         !!lastAssistant?.flowId &&
@@ -163,9 +159,6 @@ function useLiveAgentActivity() {
         applyFrame(frames[frames.length - 1], source, flow);
       } else {
         frames.forEach((f, i) => later(() => applyFrame(f, source, flow), i * STEP_MS));
-      }
-      if (!bookingFlow) {
-        later(resetAgentActivity, (reduced ? 0 : (frames.length - 1) * STEP_MS) + 1900);
       }
     }
     // messages are read via ref; only the loading transition drives this.
@@ -185,7 +178,6 @@ function useLiveAgentActivity() {
       const tracedFrames = parseTraceToFrames(confirmation.trace);
       if (tracedFrames.length) {
         applyAgentTraceEvents(confirmation.trace);
-        later(resetAgentActivity, 2600);
         return;
       }
       setAgentActivity((prev) =>
@@ -215,7 +207,6 @@ function useLiveAgentActivity() {
           ),
         1000
       );
-      later(resetAgentActivity, 3600);
       return;
     }
 
@@ -223,7 +214,8 @@ function useLiveAgentActivity() {
     // PaymentAgent appears only from checkout/confirmation backend traces.
   }, [confirmation]);
 
-  // Clear pending timers on unmount (store state persists across navigation).
+  // Clear pending animation timers on unmount; the last completed formation
+  // remains visible until the next user message resets the shared store.
   useEffect(() => clearTimers, []);
 }
 
