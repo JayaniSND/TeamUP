@@ -2,10 +2,6 @@
 
 **SportsMom: Multi-Agent Sports Analytics OS**
 
-`tag:innovationlab` `tag:hackathon`
-
-> CalHacks AI 2026, SportsMom (codename BASELINE)
-
 SportsMom is a network of specialist uAgents that acts as the support team a self-managed individual-sport athlete (tennis first) doesn't have. The athlete dumps a voice note, a photo of a handwritten notebook page, or typed text, and the agent network transcribes it, classifies it, files it, and turns it into overtraining flags, performance trends, opponent scouting reports, sponsorship drafts, and fully researched tournament trips, all reachable through a single ASI:One chat session, with a React dashboard on top for the days you'd rather look than talk.
 
 - Raw input (voice / photo / text) is normalized to plain text.
