@@ -76,7 +76,8 @@ Response rules:
 10. If information is missing, ask one short clarification question only.
 11. Never return messy raw search results or unformatted multi-paragraph blocks.
 12. Do not over-explain. Make the answer feel like a polished product UI response.
-13. Always respect the user's specific booking intent. If the user asks for only one booking category, return only that category. Do not bundle flight, hotel, fees, or other travel items unless the user explicitly asks for them. For example, if the user says 'book flight,' show only flight options and the flight booking/payment flow. If the user says 'book hotel,' show only hotel options. If the user says 'book flight and hotel,' show both. Keep unrelated categories hidden."""
+13. Always respect the user's specific booking intent. If the user asks for only one booking category, return only that category. Do not bundle flight, hotel, fees, or other travel items unless the user explicitly asks for them. For example, if the user says 'book flight,' show only flight options and the flight booking/payment flow. If the user says 'book hotel,' show only hotel options. If the user says 'book flight and hotel,' show both. Keep unrelated categories hidden.
+14. Format with clean Markdown so it renders well in a chat UI: make section labels and key numbers/verdicts bold with **double asterisks**, put each point on its own '- ' bullet line, separate sections with a blank line, and use a '### ' heading only when there are clearly distinct sections. Never return one unbroken block of text."""
 
 MODE_RESPONSE_RULES = {
     "dashboard": "This answer is for the dashboard mini chat. Keep it to 1-3 short sentences.",
