@@ -234,6 +234,18 @@ Agent ports (local Bureau): Librarian `8001` · Recovery `8002` · Orchestrator 
 - The Stripe payment gate and Browserbase automation degrade gracefully: without `STRIPE_SECRET_KEY` the payment step is simply skipped, and without Browserbase credentials Scout/Logistics fall back to whatever data is already in Supabase.
 - Sentry is optional and only initializes if `SENTRY_DSN` is set.
 
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│  ███████╗██████╗  ██████╗ ██████╗ ████████╗███████╗███╗   ███╗ ██████╗ ███╗   ███╗  │
+│  ██╔════╝██╔══██╗██╔═══██╗██╔══██╗╚══██╔══╝██╔════╝████╗ ████║██╔═══██╗████╗ ████║  │
+│  ███████╗██████╔╝██║   ██║██████╔╝   ██║   ███████╗██╔████╔██║██║   ██║██╔████╔██║  │
+│  ╚════██║██╔═══╝ ██║   ██║██╔══██╗   ██║   ╚════██║██║╚██╔╝██║██║   ██║██║╚██╔╝██║  │
+│  ███████║██║     ╚██████╔╝██║  ██║   ██║   ███████║██║ ╚═╝ ██║╚██████╔╝██║ ╚═╝ ██║  │
+│  ╚══════╝╚═╝      ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝     ╚═╝ ╚═════╝ ╚═╝     ╚═╝  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+   ⚡ MULTI-AGENT SPORTS ANALYTICS OS · POWERED BY FETCH.AI & ANTHROPIC ⚡
+───────────────────────────────────────────────────────────────────────────────────────
+ [Dashboard: Aurora Glass]  [Intelligence: Claude 4.5/4.6]  [DB: Supabase]
+
 ## License
 
 MIT
