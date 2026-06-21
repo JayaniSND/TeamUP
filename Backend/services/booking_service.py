@@ -329,6 +329,24 @@ def _create_checkout_session(user_id: str, option: dict) -> dict:
     }
 
 
+def _to_plain_dict(value) -> dict:
+    """Coerce a Stripe object (or anything) to a plain dict.
+
+    stripe>=15 `StripeObject` is NOT a dict subclass and has no `.get` — calling
+    `.get()` on `session.metadata` raises AttributeError (and a 500 that loses its
+    CORS header, surfacing in the UI as a misleading 'could not reach' error).
+    `.to_dict()` returns a plain mapping; fall back gracefully otherwise."""
+    if isinstance(value, dict):
+        return value
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        try:
+            return to_dict()
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
+
+
 def confirm_checkout(session_id: str) -> dict:
     """Verify a returned Checkout Session with Stripe and mark the booking paid."""
     tr = tracker.start_flow("demo-athlete", session_id=session_id)
@@ -358,9 +376,9 @@ def confirm_checkout(session_id: str) -> dict:
                 "error": f"Could not verify payment: {e}",
             }, tr)
 
-        payment_status = getattr(session, "payment_status", None) or session.get("payment_status")
+        payment_status = getattr(session, "payment_status", None)
         paid = payment_status == "paid"
-        metadata = getattr(session, "metadata", None) or session.get("metadata") or {}
+        metadata = _to_plain_dict(getattr(session, "metadata", None))
         booking_id = metadata.get("booking_id")
         tracker.payment_verified("Payment success verified" if paid else "Payment not completed", paid=paid)
         if booking_id:

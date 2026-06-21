@@ -5,6 +5,7 @@ import { AGENT_BY_ID } from "@/lib/agents/backendAgentRegistry";
 
 const STATUS_META = {
   idle: { label: "Idle", dot: "bg-text-dim", text: "text-text-muted" },
+  planned: { label: "Planning", dot: "bg-ai", text: "text-ai" },
   in_progress: { label: "Working", dot: "bg-negative", text: "text-negative" },
   completed: { label: "Completed", dot: "bg-positive", text: "text-positive" },
   error: { label: "Attention", dot: "bg-negative", text: "text-negative" },
@@ -20,14 +21,16 @@ export function AgentActivityStatus({ activity }: { activity: AgentActivityState
   const meta = STATUS_META[activity.status];
   const activeNode = activity.activeAgent ? AGENT_BY_ID[activity.activeAgent] : null;
   const ActiveIcon = activeNode?.icon;
-  const pulse = activity.status === "in_progress";
+  const pulse = activity.status === "in_progress" || activity.status === "planned";
 
   const sourceNote =
     activity.source === "trace"
       ? "Backend runtime trace — only the agents and system steps that actually ran."
-      : activity.source === "idle"
-        ? "Waiting for the next backend runtime trace."
-        : "Inferred from your message — emergency fallback only, not a backend trace.";
+      : activity.source === "planned"
+        ? "Predicted agents for this request — live backend activity is streaming in now."
+        : activity.source === "idle"
+          ? "Waiting for the next backend runtime trace."
+          : "Inferred from your message — emergency fallback only, not a backend trace.";
 
   return (
     <div className="glass-inset rounded-2xl p-3.5">

@@ -17,7 +17,8 @@ import {
   sendChatMessage,
   type ChatMode,
 } from "@/lib/api";
-import { applyAgentTraceEvent, resetAgentActivity, seedFlow } from "@/lib/agents/agentActivityStore";
+import { applyAgentTraceEvent, resetAgentActivity, seedPlannedFlow } from "@/lib/agents/agentActivityStore";
+import { predictAgents } from "@/lib/agents/predictAgents";
 import {
   isPaymentSessionActive,
   restorePaymentSessionState,
@@ -67,6 +68,7 @@ const compactCalendarEvent = (event: SharedCalendarEvent) => ({
 const DASHBOARD_REPLY_LIMIT = 360;
 const DASHBOARD_REPLY_TOTAL_LIMIT = 400;
 const DASHBOARD_DETAILS_LINE = "Open full chat for more details.";
+const DECIMAL_DOT = "__DECIMAL_DOT__";
 
 const sentenceEnd = /[.!?]$/;
 
@@ -82,10 +84,13 @@ const compactDashboardReply = (text: string) => {
     .replace(/^\s*\*\s+/gm, "");
   const normalized = stripped.replace(/\s+/g, " ").trim();
   if (!normalized) return text;
+  if (normalized.length <= DASHBOARD_REPLY_LIMIT) return normalized;
 
-  const sentences = normalized.match(/[^.!?]+(?:[.!?]+|$)/g)?.map((s) => s.trim()).filter(Boolean) ?? [
-    normalized,
-  ];
+  const sentenceSource = normalized.replace(/(\d)\.(\d)/g, `$1${DECIMAL_DOT}$2`);
+  const sentences = sentenceSource
+    .match(/[^.!?]+(?:[.!?]+|$)/g)
+    ?.map((s) => s.split(DECIMAL_DOT).join(".").trim())
+    .filter(Boolean) ?? [normalized];
   const picked = sentences.slice(0, 3).join(" ").trim();
   const needsMore =
     sentences.length > 3 || normalized.length > DASHBOARD_REPLY_LIMIT || normalized.length > picked.length;
@@ -222,18 +227,19 @@ export function ChatSessionProvider({
     const messageId = newRuntimeId("msg");
 
     // Close any still-open stream from a superseded message so its trailing
-    // events can't bleed into this flow, reset to idle, then optimistically light
-    // the Orchestrator node immediately (before the first live SSE event).
+    // events can't bleed into this flow, reset to idle, then immediately render the
+    // PREDICTED agent network (orchestrator + the specialists this message is likely
+    // to use) so connecting nodes/edges show instantly — before any backend
+    // round-trip. The live SSE trace then animates each node as it actually runs.
     eventSourceRef.current?.close();
     resetAgentActivity();
-    seedFlow(flowId, messageId);
-    const { eventSource, ready: streamReady } = openAgentActivityStream(flowId, messageId);
+    seedPlannedFlow(flowId, messageId, predictAgents(question));
+    const { eventSource } = openAgentActivityStream(flowId, messageId);
     eventSourceRef.current = eventSource;
 
     setMessages((m) => [...m, { id: messageId, role: "user", text: question, flowId, messageId }]);
 
     try {
-      await streamReady;
       // Forward only the message + identity/session/page — the orchestrator
       // decides which agent(s) handle it (incl. travel/booking).
       const reply = await sendChatMessage(question, {

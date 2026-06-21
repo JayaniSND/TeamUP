@@ -121,29 +121,23 @@ function useLiveAgentActivity() {
       }
 
       const snap = getAgentActivitySnapshot();
-      // The live SSE stream delivered if the store is on this reply's flow AND a
-      // real specialist (beyond the optimistic Orchestrator seed) showed up.
+      // The live SSE stream delivered if the store is on this reply's flow AND real
+      // backend events promoted the source to "trace". We can't key off "a non-
+      // orchestrator node exists" anymore, because the optimistic plan pre-seeds the
+      // predicted specialists (source stays "planned" until real activity streams).
       const liveStreamed =
         !!lastAssistant?.flowId &&
         snap.currentFlowId === lastAssistant.flowId &&
-        snap.agents.some((a) => a !== "orchestrator");
+        snap.source === "trace";
 
-      const source: AgentActivityState["source"] = hasTrace ? "trace" : "inferred";
-      const finalAgents = frames[frames.length - 1].agents;
-      const flow = flowLabelFor(finalAgents);
-      const alreadyStreamed =
-        hasTrace &&
-        !!lastAssistant?.flowId &&
-        getAgentActivitySnapshot().currentFlowId === lastAssistant.flowId &&
-        getAgentActivitySnapshot().source === "trace";
-
-      if (alreadyStreamed) {
-        setAgentActivity({ status: "completed", activeAgent: null });
-      } else if (reduced) {
-        applyFrame(frames[frames.length - 1], source, flow);
-      } else {
-        frames.forEach((f, i) => later(() => applyFrame(f, source, flow), i * STEP_MS));
+      // If the SSE stream never delivered, apply the REAL backend trace once —
+      // instantly, never a paced post-response replay and never a fake.
+      if (!liveStreamed && lastAssistant?.trace?.length) {
+        applyAgentTraceEvents(lastAssistant.trace);
       }
+
+      // Finalize the formation (live or trace) and fade the active agent away.
+      setAgentActivity({ status: "completed", activeAgent: null });
     }
     // messages are read via ref; only the loading transition drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -246,14 +240,10 @@ export function LiveAgentPanel() {
   const { inView, docVisible } = useVisibility(netRef);
   const reducedMotion = useReducedMotion();
 
-  // Only mount the 3D once it has been on screen (keeps the chunk out of the
-  // initial load), and never under reduced-motion / without WebGL.
-  const [everInView, setEverInView] = useState(false);
-  useEffect(() => {
-    if (inView) setEverInView(true);
-  }, [inView]);
-
-  const canUse3D = everInView && !reducedMotion && supportsWebGL();
+  // Mount the 3D scene eagerly in this panel. The user is here to watch the
+  // live agent system, so waiting for a deep canvas well to intersect can make
+  // the panel look static even while a request is running.
+  const canUse3D = !reducedMotion && supportsWebGL();
   const paused = !inView || !docVisible || !!reducedMotion;
 
   return (
@@ -274,12 +264,13 @@ export function LiveAgentPanel() {
 
       <div
         ref={netRef}
-        className="relative mt-3 flex h-[240px] min-h-[220px] min-w-0 shrink-0 items-center justify-center overflow-hidden rounded-[1.35rem] p-4 sm:h-[280px] xl:h-auto xl:max-h-[330px] xl:min-h-[230px] xl:flex-[1_1_280px]"
+        className="relative mt-3 flex h-[260px] min-h-[220px] min-w-0 grow items-center justify-center overflow-hidden rounded-[1.35rem] bg-[radial-gradient(circle_at_50%_18%,rgba(31,159,104,0.13),rgba(255,255,255,0.40)_42%,rgba(226,246,236,0.30)_100%)] ring-1 ring-line/80 sm:h-[300px] xl:h-auto xl:min-h-[260px]"
       >
         {canUse3D ? (
           <AgentCanvasBoundary fallback={<AgentNetwork activity={activity} />}>
             <Suspense fallback={<AgentNetwork activity={activity} />}>
-              <div className="absolute inset-x-3 bottom-0 top-7 translate-y-[10%]">
+              {/* Fill the whole well; the auto-fit camera frames the formation. */}
+              <div className="absolute inset-0">
                 <AgentNetwork3D activity={activity} paused={paused} />
               </div>
             </Suspense>
@@ -291,13 +282,13 @@ export function LiveAgentPanel() {
 
       <div className="mt-3 flex shrink-0 flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[10px] text-text-dim">
         <span className="flex items-center gap-1.5">
+          <span className="h-[3px] w-3.5 rounded-full bg-ai" /> Engaging
+        </span>
+        <span className="flex items-center gap-1.5">
           <span className="h-[3px] w-3.5 rounded-full bg-negative" /> Communicating
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-[3px] w-3.5 rounded-full bg-positive" /> Completed
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-[3px] w-3.5 rounded-full bg-text-dim/50" /> Idle
+          <span className="h-[3px] w-3.5 rounded-full bg-positive" /> Done
         </span>
       </div>
     </section>

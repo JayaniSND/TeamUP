@@ -65,7 +65,7 @@ function getInitialMatchEvent(baseDate = new Date()): SharedCalendarEvent {
     endDate: dateKey(matchDate),
     endTime: "12:00 PM",
     type: "match",
-    location: "TBD",
+    location: "San Jose, CA",
     source: "initial",
     status: "Scheduled",
     notes: "Default startup match used by the AI travel planner.",

@@ -53,6 +53,8 @@ _OPEN_FLOW_TTL_MS = 15 * 60 * 1000
 # ── event types (mirror the frontend's expectations) ────────────────────────
 REQUEST_RECEIVED = "request_received"
 ORCHESTRATOR_STARTED = "orchestrator_started"
+ORCHESTRATOR_PLAN = "orchestrator_plan"
+AGENT_PLANNED = "agent_planned"
 ORCHESTRATOR_DECISION = "orchestrator_decision"
 ORCHESTRATOR_PROGRESS = "orchestrator_progress"
 AGENT_CALL_STARTED = "agent_call_started"
@@ -217,6 +219,20 @@ class AgentEventTracker:
     def orchestrator_step(self, step: str, status: str = "in_progress") -> None:
         self._emit(ORCHESTRATOR_PROGRESS, status=status, step=step, agent="orchestrator")
 
+    def plan(self, agents: "list[str]", step: str = "Planning which agents to use") -> None:
+        """Announce, BEFORE any real call, which agents the orchestrator expects to
+        use. Emits one `agent_planned` edge (orchestrator → agent, status="planned")
+        per predicted agent so the Live Agent graph can render the whole network up
+        front and then animate each node as the real calls actually happen."""
+        self._emit(ORCHESTRATOR_PLAN, status="planned", step=step, agent="orchestrator",
+                   plannedCount=len(agents))
+        for target in agents:
+            if not target or target == "orchestrator":
+                continue
+            self._emit(AGENT_PLANNED, status="planned",
+                       step=f"{_agent_name(target) or target} ready", frm="orchestrator",
+                       to=target, agent=target)
+
     def orchestrator_decision(self, step: str, **metadata: Any) -> None:
         self._emit(ORCHESTRATOR_DECISION, status="completed", step=step, agent="orchestrator", **metadata)
 
@@ -249,7 +265,23 @@ class AgentEventTracker:
         self._emit(AGENT_CALL_FAILED, status="error", step=step, frm=frm, to=agent, agent=agent, **metadata)
 
     def final_response_started(self, step: str = "Composing your answer") -> None:
-        self._emit(FINAL_RESPONSE_STARTED, status="in_progress", step=step, agent="orchestrator")
+        peer = None
+        for event in reversed(self.events):
+            candidate = event.get("agent")
+            if candidate and candidate != "orchestrator":
+                peer = candidate
+                break
+        if peer:
+            self._emit(
+                FINAL_RESPONSE_STARTED,
+                status="in_progress",
+                step=step,
+                frm=peer,
+                to="orchestrator",
+                agent="orchestrator",
+            )
+        else:
+            self._emit(FINAL_RESPONSE_STARTED, status="in_progress", step=step, agent="orchestrator")
 
     def final_response(self, step: str = "Answer ready") -> None:
         self._emit(FINAL_RESPONSE_COMPLETED, status="completed", step=step, agent="orchestrator")
@@ -406,6 +438,12 @@ def orchestrator_decision(step: str, **metadata: Any) -> None:
         tr.orchestrator_decision(step, **metadata)
 
 
+def plan(agents: "list[str]", step: str = "Planning which agents to use") -> None:
+    tr = current()
+    if tr:
+        tr.plan(agents, step)
+
+
 def orchestrator_error(step: str, **metadata: Any) -> None:
     tr = current()
     if tr:
@@ -446,6 +484,30 @@ def final_response_started(step: str = "Composing your answer") -> None:
     tr = current()
     if tr:
         tr.final_response_started(step)
+
+
+def payment_session_started(step: str = "Creating payment session", **metadata: Any) -> None:
+    tr = current()
+    if tr:
+        tr.payment_session_started(step, **metadata)
+
+
+def payment_session_completed(step: str = "Payment session ready", **metadata: Any) -> None:
+    tr = current()
+    if tr:
+        tr.payment_session_completed(step, **metadata)
+
+
+def payment_verified(step: str = "Payment verified", **metadata: Any) -> None:
+    tr = current()
+    if tr:
+        tr.payment_verified(step, **metadata)
+
+
+def calendar_event_created(step: str = "Calendar event created", **metadata: Any) -> None:
+    tr = current()
+    if tr:
+        tr.calendar_event_created(step, **metadata)
 
 
 async def track_agent_call(

@@ -512,6 +512,7 @@ def ingest(body: IngestIn):
             supabase.table("entries").update({"embedded": True}).eq("id", entry_id).execute()
         written.append({"entry_id": entry_id, "section": e["section"], "text": e["text"]})
 
+    athlete_context.clear_context_cache(user_id)
     return {
         "raw_input_id": raw_input_id,
         "input_type": body.input_type,
@@ -538,6 +539,7 @@ def create_entry(e: EntryIn):
     if stored and entry_id:
         supabase.table("entries").update({"embedded": True}).eq("id", entry_id).execute()
 
+    athlete_context.clear_context_cache(user_id)
     return {"entry_id": entry_id}
 
 
@@ -586,6 +588,7 @@ def create_agent_output(o: AgentOutputIn):
         "related_entry_ids": o.related_entry_ids,
     }).execute()
     row = (res.data or [{}])[0]
+    athlete_context.clear_context_cache(o.user_id)
     return {"output_id": row.get("id")}
 
 
@@ -599,6 +602,7 @@ def list_agent_outputs(user_id: str, limit: int = 20):
 def create_sponsorship(s: SponsorshipIn):
     res = supabase.table("sponsorship_opportunities").insert(s.model_dump()).execute()
     row = (res.data or [{}])[0]
+    athlete_context.clear_context_cache(s.user_id)
     return {"opportunity_id": row.get("id")}
 
 
@@ -606,6 +610,7 @@ def create_sponsorship(s: SponsorshipIn):
 def add_calendar_event(c: CalendarIn):
     res = supabase.table("calendar_events").insert(c.model_dump()).execute()
     row = (res.data or [{}])[0]
+    athlete_context.clear_context_cache(c.user_id)
     return {"event_id": row.get("id")}
 
 
@@ -886,6 +891,7 @@ def admin_seed(user_id: str = DEMO_USER_ID):
     r = supabase.table("calendar_events").insert(cal).execute()
     inserted["calendar_events"] = len(r.data or [])
 
+    athlete_context.clear_context_cache(user_id)
     return {"seeded": inserted, "user_id": user_id}
 
 
@@ -924,6 +930,7 @@ def admin_clear(user_id: str = DEMO_USER_ID):
     for table in tables:
         r = supabase.table(table).delete().eq("user_id", user_id).execute()
         deleted[table] = len(r.data or [])
+    athlete_context.clear_context_cache(user_id)
     return {"cleared": deleted, "user_id": user_id}
 
 

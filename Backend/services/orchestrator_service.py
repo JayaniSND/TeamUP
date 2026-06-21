@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime
 
 import anthropic
 
@@ -37,7 +38,7 @@ from agents.common.booking_intent import (
     classify_booking_intent,
     option_allowed_for_intent,
 )
-from agents.common import claude
+from agents.common import claude, domain_router
 from database import supabase
 
 from . import agent_event_tracker as tracker
@@ -55,9 +56,19 @@ except Exception:  # noqa: BLE001
 log = logging.getLogger("orchestrator_service")
 
 _SYNTHESIS_MODEL = os.environ.get("SYNTHESIS_MODEL", "claude-sonnet-4-6")
+_CHAT_MODEL = os.environ.get("CHAT_MODEL", os.environ.get("CLASSIFY_MODEL", "claude-haiku-4-5"))
+# Bound multi-agent fan-out: the lead specialist plus at most this many supporting
+# analysis specialists run per message, so a multi-domain request lights several
+# agents without unbounded cost or runaway agent-to-agent recursion.
+_MAX_EXTRA_SPECIALISTS = 2
 _DASHBOARD_DETAILS_LINE = "Open full chat for more details."
 _DASHBOARD_REPLY_LIMIT = 360
 _DASHBOARD_REPLY_TOTAL_LIMIT = 400
+# Even the main chat page should stay scannable — cap the full reply and trim at
+# section boundaries so the structure (Summary / Details / …) survives.
+_FULL_REPLY_CHAR_LIMIT = 760
+_MIN_VISIBLE_RESPONSE_SECONDS = float(os.environ.get("CHAT_MIN_VISIBLE_RESPONSE_SECONDS", "8"))
+_DECIMAL_DOT = "__DECIMAL_DOT__"
 _SENTENCE_END_RE = re.compile(r"[.!?]$")
 _SENTENCE_RE = re.compile(r"[^.!?]+(?:[.!?]+|$)")
 
@@ -80,7 +91,8 @@ Response rules:
 
 MODE_RESPONSE_RULES = {
     "dashboard": "This answer is for the dashboard mini chat. Keep it to 1-3 short sentences.",
-    "full": "This answer is for the main chat page. Provide enough detail, but keep it structured and easy to scan.",
+    "full": "This answer is for the main chat page. Keep it concise and structured — at most "
+            "~6 short lines, lead with the direct answer, and do not pad. Brevity over completeness.",
 }
 
 # Frontend-facing label for each route (what `agents_used` reports).
@@ -121,6 +133,32 @@ def _finalize(response: dict, tr: tracker.AgentEventTracker | None, mode: str) -
         response["flowId"] = tr.flow_id
         response["messageId"] = tr.message_id
     return _apply_response_mode(response, mode)
+
+
+async def _finish_after_visible_delay(
+    response: dict,
+    tr: tracker.AgentEventTracker | None,
+    mode: str,
+    started_at: float,
+    *,
+    composing_step: str = "Composing your answer",
+) -> dict:
+    """Keep the live agent UI visible for a predictable product-feel interval.
+
+    The expensive work can finish quickly, but the frontend's 3D/live-agent view
+    should have time to animate. We emit `final_response_started`, wait until the
+    request has been visible for the configured minimum, then emit the final
+    response event that closes the stream.
+    """
+    if tr is not None:
+        tracker.final_response_started(composing_step)
+    elapsed = asyncio.get_running_loop().time() - started_at
+    remaining = _MIN_VISIBLE_RESPONSE_SECONDS - elapsed
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+    if tr is not None:
+        tracker.final_response("Final response sent")
+    return _finalize(response, tr, mode)
 
 
 def _response_mode(response_mode: str | None, context: dict | None) -> str:
@@ -245,8 +283,15 @@ def _compact_dashboard_message(message: str) -> str:
     text = " ".join(stripped.split())
     if not text:
         return message
+    if len(text) <= _DASHBOARD_REPLY_LIMIT:
+        return text
 
-    sentences = [s.strip() for s in _SENTENCE_RE.findall(text) if s.strip()] or [text]
+    sentence_source = re.sub(r"(\d)\.(\d)", rf"\1{_DECIMAL_DOT}\2", text)
+    sentences = [
+        s.replace(_DECIMAL_DOT, ".").strip()
+        for s in _SENTENCE_RE.findall(sentence_source)
+        if s.strip()
+    ] or [text]
     picked = " ".join(sentences[:3]).strip()
     needs_more = len(sentences) > 3 or len(text) > _DASHBOARD_REPLY_LIMIT or len(text) > len(picked)
     limit = (
@@ -262,13 +307,38 @@ def _compact_dashboard_message(message: str) -> str:
     return reply
 
 
+def _compact_full_message(message: str) -> str:
+    """Keep the main-chat reply scannable: trim at blank-line section boundaries so
+    the Summary/Details structure stays intact, dropping only trailing sections that
+    blow the budget. Falls back to a word-boundary cut if the first block is huge."""
+    text = str(message or "").strip()
+    if len(text) <= _FULL_REPLY_CHAR_LIMIT:
+        return text
+    blocks = re.split(r"\n\s*\n", text)
+    out: list[str] = []
+    total = 0
+    for block in blocks:
+        if out and total + len(block) + 2 > _FULL_REPLY_CHAR_LIMIT:
+            break
+        out.append(block)
+        total += len(block) + 2
+    result = "\n\n".join(out).rstrip()
+    if len(result) > _FULL_REPLY_CHAR_LIMIT:
+        result = _truncate_at_word(result, _FULL_REPLY_CHAR_LIMIT)
+        if not _SENTENCE_END_RE.search(result):
+            result += "…"
+    return result
+
+
 def _apply_response_mode(response: dict, mode: str) -> dict:
-    if mode != "dashboard":
-        return response
     compacted = dict(response)
-    compacted["message"] = _compact_dashboard_message(str(compacted.get("message") or ""))
-    if isinstance(compacted.get("suggested_actions"), list):
-        compacted["suggested_actions"] = compacted["suggested_actions"][:2]
+    if mode == "dashboard":
+        compacted["message"] = _compact_dashboard_message(str(compacted.get("message") or ""))
+        if isinstance(compacted.get("suggested_actions"), list):
+            compacted["suggested_actions"] = compacted["suggested_actions"][:2]
+        return compacted
+    # full mode — still bound the length so the main chat never dumps a wall of text.
+    compacted["message"] = _compact_full_message(str(compacted.get("message") or ""))
     return compacted
 
 
@@ -331,6 +401,352 @@ def _merge_frontend_calendar(ctx: dict, context: dict | None) -> None:
     destinations.update(e.get("location") for e in travel_events if e.get("location"))
     travel["destinations"] = sorted(destinations)
     ctx["travel"] = travel
+
+
+# ── fast dashboard answers ─────────────────────────────────────────────────
+
+def _row_id(row: dict | None) -> str | None:
+    if not isinstance(row, dict):
+        return None
+    value = row.get("id") or row.get("entry_id")
+    return str(value) if value else None
+
+
+def _row_when(row: dict | None) -> str:
+    if not isinstance(row, dict):
+        return ""
+    return str(row.get("date") or row.get("start_time") or row.get("created_at") or row.get("ts") or "")
+
+
+def _time_value(row: dict | None) -> float:
+    raw = _row_when(row)
+    if not raw:
+        return 0.0
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")[:25]).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _latest(rows: list[dict] | None) -> dict | None:
+    items = [r for r in (rows or []) if isinstance(r, dict)]
+    if not items:
+        return None
+    return max(items, key=_time_value)
+
+
+def _metric_value(metrics: list[dict] | None, name: str) -> dict | None:
+    needle = name.lower()
+    candidates = [
+        m for m in (metrics or [])
+        if needle in str(m.get("metric_name") or "").lower()
+    ]
+    return _latest(candidates)
+
+
+def _number(value, default: float | None = None) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _compact_date(row: dict | None) -> str:
+    value = _row_when(row)
+    if not value:
+        return ""
+    return value[:10]
+
+
+def _source_ids(*rows: dict | None) -> list[str]:
+    return [rid for rid in (_row_id(r) for r in rows) if rid]
+
+
+def _latest_match_line(match: dict | None) -> str:
+    if not match:
+        return "No match result is recorded yet."
+    bits = []
+    if match.get("opponent"):
+        bits.append(f"opponent {match.get('opponent')}")
+    if match.get("result"):
+        bits.append(str(match.get("result")))
+    if match.get("score"):
+        bits.append(f"score {match.get('score')}")
+    detail = ", ".join(bits) or "match recorded"
+    when = _compact_date(match)
+    return f"Latest match {f'on {when} ' if when else ''}shows {detail}."
+
+
+def _recent_rows(rows: list[dict] | None, limit: int = 3) -> list[dict]:
+    return sorted([r for r in (rows or []) if isinstance(r, dict)], key=_time_value, reverse=True)[:limit]
+
+
+def _metric_series(metrics: list[dict] | None, name: str) -> list[dict]:
+    needle = name.lower()
+    series = [
+        m for m in (metrics or [])
+        if needle in str(m.get("metric_name") or "").lower()
+    ]
+    return sorted(series, key=_time_value)
+
+
+def _metric_change(metrics: list[dict] | None, name: str) -> str:
+    series = _metric_series(metrics, name)
+    if not series:
+        return ""
+    first, last = series[0], series[-1]
+    first_value = _number(first.get("metric_value"))
+    last_value = _number(last.get("metric_value"))
+    unit = str(last.get("unit") or first.get("unit") or "").strip()
+    if first_value is None or last_value is None:
+        return ""
+    if len(series) == 1 or first_value == last_value:
+        return f"{last_value:g}{unit and ' ' + unit}"
+    direction = "up" if last_value > first_value else "down"
+    return f"{direction} from {first_value:g} to {last_value:g}{unit and ' ' + unit}"
+
+
+def _format_recent_performance_summary(ctx: dict) -> tuple[str, list[str]]:
+    matches = _recent_rows(ctx.get("matches"), 3)
+    training = _recent_rows(ctx.get("training"), 3)
+    metrics = ctx.get("metrics") or []
+
+    if not matches and not training and not metrics:
+        return (
+            "Performance Summary\nI do not have enough recent performance data yet.\n\nNext Focus\nLog a match result or training session and I can summarize form from your own data.",
+            [],
+        )
+
+    wins = sum(1 for m in matches if str(m.get("result") or "").lower() == "win")
+    losses = sum(1 for m in matches if str(m.get("result") or "").lower() == "loss")
+    latest_match = matches[0] if matches else None
+    latest_training = training[0] if training else None
+    focus_counts: dict[str, int] = {}
+    for session in training:
+        focus = str(session.get("focus_area") or "").strip()
+        if focus:
+            focus_counts[focus] = focus_counts.get(focus, 0) + 1
+    top_focus = max(focus_counts, key=focus_counts.get) if focus_counts else (latest_training or {}).get("focus_area") or "quality reps"
+
+    serve_change = _metric_change(metrics, "serve_speed")
+    load_change = _metric_change(metrics, "training_load")
+    recovery = _metric_value(metrics, "recovery_score")
+    recovery_value = _number((recovery or {}).get("metric_value"))
+
+    lines = [
+        "Performance Summary",
+        f"Recent form: {wins} win{'s' if wins != 1 else ''} / {losses} loss{'es' if losses != 1 else ''} across the latest {len(matches)} match{'es' if len(matches) != 1 else ''} on record."
+        if matches else "Recent form: no match results are recorded in the latest performance window.",
+    ]
+    if latest_match:
+        opponent = latest_match.get("opponent") or "unknown opponent"
+        result = latest_match.get("result") or "result unknown"
+        score = latest_match.get("score") or "score unknown"
+        when = _compact_date(latest_match)
+        lines.append(f"Latest match: {result} vs {opponent}{f' on {when}' if when else ''}, {score}.")
+
+    signals: list[str] = []
+    if serve_change:
+        signals.append(f"serve speed {serve_change}")
+    if load_change:
+        signals.append(f"training load {load_change}")
+    if recovery_value is not None:
+        signals.append(f"recovery score {recovery_value:g}")
+    if signals:
+        lines += ["", "Signals", "* " + "; ".join(signals) + "."]
+
+    caution = recovery_value is not None and recovery_value < 65
+    read: list[str] = []
+    if matches:
+        latest_result = str((latest_match or {}).get("result") or "").lower()
+        if latest_result == "win":
+            read.append("Recent form is positive: the latest result is a win and the recent match window is winning overall.")
+        elif latest_result == "loss":
+            read.append("Recent form needs attention: the latest result is a loss, so the next block should stay tightly focused.")
+        else:
+            read.append("Recent form is measurable now; keep logging match results so the trend stays clear.")
+    if serve_change:
+        read.append(f"Serve is the clearest technical thread: serve speed is {serve_change}, so keep that as the main focus.")
+    if caution:
+        read.append("The limiter is workload: recovery is below the ideal range, so chase cleaner serve reps instead of adding volume.")
+    elif load_change:
+        read.append("Training load is moving, so watch whether the extra work carries into match performance.")
+    if read:
+        lines += ["", "Read", *[f"* {point}" for point in read[:3]]]
+
+    focus_line = (
+        f"Keep the main technical focus on {top_focus}, but reduce volume until recovery rebounds."
+        if caution
+        else f"Keep the main technical focus on {top_focus} and track whether it carries into the next match."
+    )
+    lines += ["", "Next Focus", focus_line]
+    return "\n".join(lines), _source_ids(*(matches + training + [_metric_value(metrics, "serve_speed"), _metric_value(metrics, "training_load"), recovery]))
+
+
+def _fast_dashboard_recovery(message: str, ctx: dict) -> tuple[str, list[str]]:
+    recovery_logs = _recent_rows(ctx.get("recovery_logs"), 5)
+    training = _recent_rows(ctx.get("training"), 3)
+    latest_recovery = recovery_logs[0] if recovery_logs else None
+    latest_training = training[0] if training else None
+    recovery_score = _metric_value(ctx.get("metrics"), "recovery_score")
+    load_change = _metric_change(ctx.get("metrics"), "training_load")
+
+    if not latest_recovery and not latest_training and not recovery_score:
+        return (
+            "Recovery Summary\nI do not have enough recent recovery history yet.\n\nNext Focus\nLog sleep, soreness, fatigue, and training load so I can flag patterns quickly.",
+            [],
+        )
+
+    area = str((latest_recovery or {}).get("injury_area") or "").strip()
+    risk = str((latest_recovery or {}).get("risk_level") or "").lower()
+    soreness = _number((latest_recovery or {}).get("soreness_level") or (latest_recovery or {}).get("pain_level"))
+    fatigue = _number((latest_recovery or {}).get("fatigue_level"))
+    sleep = _number((latest_recovery or {}).get("sleep_hours"))
+    score = _number((recovery_score or {}).get("metric_value"))
+    training_minutes = _number((latest_training or {}).get("duration_minutes"))
+
+    signals: list[str] = []
+    if risk:
+        signals.append(f"latest risk {risk}")
+    if area:
+        signals.append(area)
+    if soreness is not None:
+        signals.append(f"soreness {soreness:g}/10")
+    if fatigue is not None:
+        signals.append(f"fatigue {fatigue:g}/10")
+    if sleep is not None:
+        signals.append(f"sleep {sleep:g}h")
+    if score is not None:
+        signals.append(f"recovery score {score:g}")
+    if training_minutes is not None:
+        signals.append(f"latest load {training_minutes:g} min")
+    if load_change:
+        signals.append(f"training load {load_change}")
+
+    caution = risk in {"medium", "high"} or (soreness or 0) >= 4 or (fatigue or 0) >= 4 or (score is not None and score < 65)
+    lead = "Recovery should lead today." if caution else "Recovery looks manageable today."
+    latest_date = _compact_date(latest_recovery) if latest_recovery else ""
+    read = []
+    if caution:
+        read.append("The recent log points to a wellness risk pattern, not a diagnosis.")
+        read.append("Keep the next session lighter and watch whether soreness or fatigue drops after warmup.")
+    else:
+        read.append("The recent log does not show a strong recovery warning.")
+        read.append("Keep quality high, but keep logging soreness and sleep after training.")
+    if score is not None and score < 65:
+        read.append("Recovery score is below the ideal range, so avoid adding volume today.")
+
+    lines = ["Recovery Summary", lead]
+    if signals:
+        lines += [
+            "",
+            "Latest Log",
+            f"* {', '.join(signals[:7])}{f' on {latest_date}' if latest_date else ''}.",
+        ]
+    lines += ["", "Read", *[f"* {point}" for point in read[:3]]]
+    lines += [
+        "",
+        "Next Focus",
+        "Keep the next session light and re-check the same signal after warmup."
+        if caution
+        else "Keep quality high, then log soreness, fatigue, and sleep after training.",
+    ]
+    return (
+        "\n".join(lines),
+        _source_ids(*(recovery_logs[:3] + training[:1] + [recovery_score])),
+    )
+
+
+def _fast_dashboard_performance(message: str, ctx: dict) -> tuple[str, list[str]]:
+    return _format_recent_performance_summary(ctx)
+
+
+def _fast_dashboard_logistics(ctx: dict) -> tuple[str, list[str]]:
+    events = ctx.get("schedule") or []
+    next_event = _latest(events)
+    if not next_event:
+        return (
+            "I do not see a recorded upcoming match or tournament yet. Add the event, then I can help with calendar and travel planning.",
+            [],
+        )
+    title = next_event.get("title") or "Next event"
+    location = next_event.get("location") or "location TBD"
+    when = _compact_date(next_event)
+    return (
+        f"Next logistics item: {title}{f' on {when}' if when else ''} at {location}. I can help plan travel, but I will not book anything without your confirmation.",
+        _source_ids(next_event),
+    )
+
+
+def _fast_dashboard_generic(message: str, ctx: dict) -> tuple[str, list[str]]:
+    text = message.lower()
+    latest_match = _latest(ctx.get("matches"))
+    latest_recovery = _latest(ctx.get("recovery_logs"))
+    latest_training = _latest(ctx.get("training"))
+
+    if "opponent" in text or "last match" in text or "latest match" in text:
+        return _latest_match_line(latest_match), _source_ids(latest_match)
+
+    recovery_msg, recovery_sources = _fast_dashboard_recovery(message, ctx)
+    soreness = _number((latest_recovery or {}).get("soreness_level") or (latest_recovery or {}).get("pain_level"), 0)
+    fatigue = _number((latest_recovery or {}).get("fatigue_level"), 0)
+    risk = str((latest_recovery or {}).get("risk_level") or "").lower()
+    if risk in {"medium", "high"} or (soreness or 0) >= 4 or (fatigue or 0) >= 4:
+        return recovery_msg, recovery_sources
+
+    perf_msg, perf_sources = _fast_dashboard_performance(message, ctx)
+    if latest_match or latest_training:
+        return (
+            f"Today's best focus: {((latest_training or {}).get('focus_area') or 'quality reps')}. {perf_msg}",
+            list(dict.fromkeys([*perf_sources, *_source_ids(latest_recovery)])),
+        )
+    return (
+        "I do not have enough athlete history yet. Upload a voice note, photo, or text log and I will turn it into dashboard signals.",
+        [],
+    )
+
+
+def _fast_dashboard_answer(message: str, ctx: dict, lead: str = "assistant") -> tuple[str, list[str]]:
+    if lead == "recovery":
+        return _fast_dashboard_recovery(message, ctx)
+    if lead == "performance":
+        return _fast_dashboard_performance(message, ctx)
+    if lead == "logistics":
+        return _fast_dashboard_logistics(ctx)
+    return _fast_dashboard_generic(message, ctx)
+
+
+def _context_scope_for(domains: list[str], booking_intent: str) -> str:
+    if booking_intent != "general" or "logistics" in domains:
+        return "logistics"
+    if "performance" in domains:
+        return "performance"
+    if "recovery" in domains:
+        return "recovery"
+    return "full"
+
+
+def _simple_recent_domain_question(message: str, agent: str | None) -> bool:
+    """Fast path for compact status questions like 'how was my performance'.
+
+    These should answer from the latest few records, not launch classifier +
+    specialist + coaching/fitness chains over the whole athlete history.
+    """
+    if agent not in {"performance", "recovery"}:
+        return False
+    text = " ".join(str(message or "").lower().split()).strip(" ?!.")
+    words = re.findall(r"[a-z0-9]+", text)
+    if len(words) > 8:
+        return False
+    if agent == "performance":
+        return bool(
+            re.search(r"\bperformance|form|performing|played|playing\b", text)
+            and re.search(r"\bhow|was|is|am|recent|summarize|summary|looking\b", text)
+        )
+    return bool(
+        re.search(r"\brecovery|recovering|body|tired|sore|soreness|fatigue|injury|injured|risk|log|logs\b", text)
+        and re.search(r"\bhow|was|is|am|recent|summarize|summary|looking\b", text)
+    )
 
 
 # ── response envelope ───────────────────────────────────────────────────────
@@ -425,8 +841,8 @@ def answer_question(user_id: str, question: str, response_mode: str = "full") ->
         f"ATHLETE DATABASE RECORDS:\n{context}\n\nQUESTION: {question}"
     )
     resp = anthropic.Anthropic().messages.create(
-        model=_SYNTHESIS_MODEL,
-        max_tokens=800,
+        model=_CHAT_MODEL,
+        max_tokens=420 if response_mode == "full" else 260,
         system=_style_prompt(response_mode),
         messages=[{"role": "user", "content": prompt}],
     )
@@ -455,6 +871,7 @@ async def run_orchestrator(
     """
     message = (message or "").strip()
     mode = _response_mode(response_mode, context)
+    started_at = asyncio.get_running_loop().time()
     # One flow per message: the tracker collects events live and is cleared when
     # the request finishes. Module-level convenience fns resolve it via contextvar.
     tr = tracker.start_flow(user_id, message_id=message_id, session_id=session_id, flow_id=flow_id)
@@ -465,13 +882,21 @@ async def run_orchestrator(
         tracker.orchestrator_started("Orchestrator started")
         if not system_instruction and isinstance(context, dict):
             system_instruction = context.get("system_instruction")
+        domains = domain_router.detect_domains(message)
+        booking_intent = classify_booking_intent(message, None)
+        context_scope = _context_scope_for(domains, booking_intent)
+
+        # 0. Announce the PLANNED agent network up front (instant, no LLM/IO) so the
+        #    Live Agent graph renders the whole expected network before the real
+        #    calls run; the live trace then animates each node as it actually fires.
+        tracker.plan(domain_router.predict_agents(message))
 
         # 1. Real athlete context from Supabase (off the event loop — sync client).
         ctx = await tracker.track_agent_call(
             from_agent="orchestrator",
             to_agent="athlete_context",
             step="Loading your athlete history",
-            call=lambda: asyncio.to_thread(athlete_context.load_athlete_context, user_id),
+            call=lambda: asyncio.to_thread(athlete_context.load_athlete_context, user_id, context_scope),
         )
         _merge_frontend_calendar(ctx, context)
         ctx_summary, warnings = athlete_context.summarize_context(ctx)
@@ -479,15 +904,87 @@ async def run_orchestrator(
                  user_id, session_id, (context or {}).get("page"), mode,
                  "yes" if system_instruction else "no", ctx_summary)
 
+        # Small-talk / acknowledgements ("hi", "thanks", "ok") still deserve a REAL
+        # agent call: route them to the general athlete-care assistant rather than a
+        # dead-end Librarian filing. Handled before intent classification so a bare
+        # greeting never misroutes — and it works even without an API key.
+        if domain_router.is_smalltalk(message):
+            tracker.orchestrator_decision("Routing decision made", intent="ask",
+                                          targetAgent="assistant", bookingIntent="general",
+                                          domains="general")
+            response = await _route_general(user_id, message, ctx, ctx_summary, warnings)
+            return await _finish_after_visible_delay(response, tr, mode, started_at)
+
+        # Dashboard rail responses need to feel instant. It already renders as a
+        # compact command surface, so clear domain/focus questions can be answered
+        # from the athlete context snapshot without paying for intent
+        # classification plus a second synthesis call.
+        if mode == "dashboard":
+            if booking_intent != "general":
+                kind, agent = "action", "logistics"
+            elif domains:
+                kind, agent = "action", domains[0]
+            else:
+                kind, agent = "ask", "none"
+
+            tracker.orchestrator_decision(
+                "Routing decision made",
+                intent=str(kind),
+                targetAgent=str(agent or "none"),
+                bookingIntent=booking_intent,
+                domains=",".join(domains) if domains else "none",
+            )
+            try:
+                if kind == "action" and agent not in (None, "none"):
+                    response = await _route_action(
+                        user_id, message, agent, ctx, ctx_summary, warnings,
+                        booking_intent, extra_domains=domains, mode=mode,
+                    )
+                else:
+                    response = await _route_ask(
+                        user_id, message, ctx, ctx_summary, warnings, mode,
+                        extra_domains=domains,
+                    )
+                return await _finish_after_visible_delay(response, tr, mode, started_at)
+            except Exception as e:  # noqa: BLE001
+                log.exception("fast dashboard route failed (intent=%s agent=%s)", kind, agent)
+                tracker.orchestrator_error("Something went wrong while reading dashboard context",
+                                           errorType=type(e).__name__)
+                response = _envelope(
+                    "Something went wrong while reading your dashboard context. Please try again.",
+                    intent=kind or "error", agents=["orchestrator"], ctx_summary=ctx_summary,
+                    warnings=warnings + [f"dashboard route error: {e}"],
+                )
+                return await _finish_after_visible_delay(response, tr, mode, started_at)
+
+        # Clear short domain questions in the full assistant should also stay
+        # fast. Use deterministic routing and the scoped context already loaded
+        # above instead of running intent classification or specialist fan-out.
+        if domains and _simple_recent_domain_question(message, domains[0]):
+            kind, agent = "action", domains[0]
+            tracker.orchestrator_decision(
+                "Routing decision made",
+                intent=kind,
+                targetAgent=agent,
+                bookingIntent=booking_intent,
+                domains=",".join(domains),
+            )
+            response = await _route_action(
+                user_id, message, agent, ctx, ctx_summary, warnings,
+                booking_intent, extra_domains=[], mode="fast",
+            )
+            return await _finish_after_visible_delay(response, tr, mode, started_at)
+
         if not os.environ.get("ANTHROPIC_API_KEY"):
             tracker.orchestrator_error("AI analysis unavailable — no API key configured")
-            return _finalize(_envelope(
+            response = _envelope(
                 "AI analysis isn't available yet — the backend has no ANTHROPIC_API_KEY "
                 "configured. Your data is still being stored and can be analyzed once a "
                 "key is set.",
                 intent="none", agents=["orchestrator"], ctx_summary=ctx_summary,
                 warnings=warnings + ["ANTHROPIC_API_KEY is not set on the server."],
-            ), tr, mode)
+            )
+            return await _finish_after_visible_delay(response, tr, mode, started_at)
 
         # 2. Intent classification — routing is the orchestrator's job, not the UI's.
         tracker.orchestrator_step("Classifying your intent", "in_progress")
@@ -497,50 +994,202 @@ async def run_orchestrator(
             log.exception("intent classification failed")
             tracker.orchestrator_error("Could not understand the request",
                                        errorType=type(e).__name__)
-            return _finalize(_envelope(
+            response = _envelope(
                 "I had trouble understanding that — could you rephrase?",
                 intent="error", agents=["orchestrator"], ctx_summary=ctx_summary,
                 warnings=warnings + [f"intent classification error: {e}"],
-            ), tr, mode)
+            )
+            return await _finish_after_visible_delay(response, tr, mode, started_at)
 
         kind, agent = intent.get("intent"), intent.get("agent")
         booking_intent = classify_booking_intent(message, intent.get("bookingIntent"))
+
+        # Broaden routing with the deterministic domain detector. A clear domain
+        # keyword upgrades a vague ask/none into a real specialist call (so e.g.
+        # "summarize my recent performance" reaches the Performance agent), and any
+        # OTHER domains the message touches run later as supporting specialists.
+        if kind == "ask" and domains:
+            kind, agent = "action", domains[0]
+        elif kind == "action" and agent in (None, "none") and domains:
+            agent = domains[0]
+
         tracker.orchestrator_decision(
             "Routing decision made",
             intent=str(kind or "unknown"),
             targetAgent=str(agent or "none"),
             bookingIntent=booking_intent,
+            domains=",".join(domains) if domains else "none",
         )
-        log.info("intent=%s agent=%s booking_intent=%s", kind, agent, booking_intent)
+        log.info("intent=%s agent=%s booking_intent=%s domains=%s", kind, agent, booking_intent, domains)
 
         # 3. Route. Each route emits its own agent_started/agent_completed events
-        #    around the real specialist call (see _route_* below).
+        #    around the real specialist call (see _route_* below), and runs any extra
+        #    detected domains as supporting agents for genuine multi-agent coverage.
         try:
-            if kind == "ask":
-                response = await _route_ask(user_id, message, ctx, ctx_summary, warnings, mode)
-            elif kind == "action" and agent not in (None, "none"):
-                response = await _route_action(user_id, message, agent, ctx, ctx_summary, warnings, booking_intent)
+            if kind == "action" and agent not in (None, "none"):
+                response = await _route_action(user_id, message, agent, ctx, ctx_summary,
+                                               warnings, booking_intent, extra_domains=domains,
+                                               mode=mode)
+            elif kind == "ask":
+                response = await _route_ask(user_id, message, ctx, ctx_summary, warnings, mode,
+                                            extra_domains=domains)
             else:
-                response = await _route_log(user_id, message, ctx_summary, warnings)
-            tracker.final_response_started("Composing your answer")
-            tracker.final_response("Final response sent")
-            return _finalize(response, tr, mode)
+                response = await _route_log(user_id, message, ctx_summary, warnings,
+                                            ctx=ctx, extra_domains=domains)
+            return await _finish_after_visible_delay(response, tr, mode, started_at)
         except Exception as e:  # noqa: BLE001 — never 500 the chat; degrade cleanly
             log.exception("route failed (intent=%s agent=%s)", kind, agent)
             tracker.orchestrator_error("Something went wrong while analyzing that",
                                        errorType=type(e).__name__)
-            return _finalize(_envelope(
+            response = _envelope(
                 "Something went wrong while analyzing that. Please try again.",
                 intent=kind or "error", agents=["orchestrator"], ctx_summary=ctx_summary,
                 warnings=warnings + [f"routing error: {e}"],
-            ), tr, mode)
+            )
+            return await _finish_after_visible_delay(response, tr, mode, started_at)
     finally:
         tracker.clear_flow(tr)
 
 
+# ── general athlete-care agent (greetings / acknowledgements / unclear) ──────
+# Guarantees that EVERY message — even "hi" or "thanks" — produces a real, tracked
+# agent call (orchestrator → assistant) instead of an empty Librarian filing.
+
+def _general_support_reply(ctx, ctx_summary) -> str:
+    name = str((ctx.get("profile") or {}).get("name") or "").split(" ")[0].strip()
+    hello = f"Hi {name}!" if name else "Hi!"
+    return (
+        "Summary\n"
+        f"{hello} I'm your athlete assistant. I can look across your recovery, "
+        "performance, schedule, and travel.\n\n"
+        "Next Step\n"
+        "Try \"How's my recovery?\", \"Summarize my recent form\", or "
+        "\"Plan travel for my next match\"."
+    )
+
+
+async def _route_general(user_id, message, ctx, ctx_summary, warnings) -> dict:
+    reply = await tracker.track_agent_call(
+        from_agent="orchestrator",
+        to_agent="assistant",
+        step="General athlete check-in",
+        call=lambda: _general_support_reply(ctx, ctx_summary),
+        inputChars=len(message),
+    )
+    return _envelope(
+        reply, intent="ask", agents=[_AGENT_LABELS["ask"]], ctx_summary=ctx_summary,
+        warnings=warnings,
+        suggested=["How's my recovery looking?", "Summarize my recent form",
+                   "What should I focus on this week?"],
+    )
+
+
+async def _route_dashboard_fast(user_id, message, ctx, ctx_summary, warnings, lead: str = "assistant") -> dict:
+    agent = lead if lead in {"recovery", "performance", "logistics"} else "assistant"
+    text, sources = await tracker.track_agent_call(
+        from_agent="orchestrator",
+        to_agent=agent,
+        step="Reading dashboard context",
+        call=lambda: _fast_dashboard_answer(message, ctx, lead),
+        inputChars=len(message),
+    )
+    suggested = {
+        "recovery": ["What should I change in training?", "Summarize recent form"],
+        "performance": ["Where am I improving?", "How's my recovery looking?"],
+        "logistics": ["Plan travel for it", "Add it to calendar"],
+    }.get(agent, ["How's my recovery looking?", "Summarize my recent form"])
+    return _envelope(
+        text,
+        intent="ask" if agent == "assistant" else "action",
+        agents=[_AGENT_LABELS.get(agent, agent)],
+        ctx_summary=ctx_summary,
+        warnings=warnings,
+        suggested=suggested,
+        sources=sources,
+    )
+
+
+# ── multi-agent fan-out (supporting analysis specialists) ───────────────────
+# A single message can touch several domains. The lead route answers in full;
+# these run the OTHER detected analysis specialists (recovery / performance) as
+# real, tracked Claude calls and fold a short labeled note into the answer — so the
+# Live Agent graph lights every agent that genuinely contributed. Bounded by
+# _MAX_EXTRA_SPECIALISTS to avoid runaway fan-out. (Logistics/sponsorship only run
+# as the lead — they produce rich option/draft output, not a composable note.)
+
+async def _brief_recovery(user_id, message, ctx) -> tuple[str, str]:
+    v = await tracker.track_agent_call(
+        from_agent="orchestrator", to_agent="recovery",
+        step="Cross-checking recovery signals",
+        call=lambda: claude.assess_recovery(
+            message, ctx.get("entries") or [], ctx.get("recovery_logs") or [],
+            ctx.get("training") or [], ctx.get("metrics") or [],
+        ),
+    )
+    await asyncio.to_thread(_persist_output, user_id, "Recovery Agent", "recovery",
+                            v.get("summary", ""), v.get("severity", "info"),
+                            v.get("recommended_action", ""))
+    return "Recovery Check", _short_text(v.get("summary"), 170)
+
+
+async def _brief_performance(user_id, message, ctx) -> tuple[str, str]:
+    v = await tracker.track_agent_call(
+        from_agent="orchestrator", to_agent="performance",
+        step="Cross-checking performance trends",
+        call=lambda: claude.analyze_performance(
+            message, ctx.get("matches") or [], ctx.get("training") or [], ctx.get("metrics") or [],
+        ),
+    )
+    await asyncio.to_thread(_persist_output, user_id, "Performance Agent", "performance",
+                            v.get("summary", ""), "info", v.get("recommended_focus", ""))
+    return "Performance Note", _short_text(v.get("summary"), 170)
+
+
+_BRIEF_RUNNERS = {"recovery": _brief_recovery, "performance": _brief_performance}
+
+
+async def _collect_extra_briefs(lead, domains, already_used, user_id, message, ctx):
+    """Run up to _MAX_EXTRA_SPECIALISTS supporting analysis specialists the lead route
+    didn't already cover. Returns (addenda, agents_used) — each failure is swallowed
+    so a supporting agent can never break the primary answer."""
+    addenda: list[tuple[str, str]] = []
+    used: list[str] = []
+    covered = {lead, *(already_used or [])}
+    for d in domains or []:
+        if len(used) >= _MAX_EXTRA_SPECIALISTS:
+            break
+        runner = _BRIEF_RUNNERS.get(d)
+        if not runner or d in covered:
+            continue
+        try:
+            label, text = await runner(user_id, message, ctx)
+            if text:
+                addenda.append((label, text))
+            used.append(d)
+            covered.add(d)
+        except Exception:  # noqa: BLE001 — a supporting agent must never break the answer
+            log.exception("supporting specialist %s failed", d)
+    return addenda, used
+
+
+async def _augment_with_extras(response, lead, extra_domains, already_used, user_id, message, ctx):
+    """Fold cross-domain supporting-specialist notes into an existing envelope."""
+    addenda, extra_agents = await _collect_extra_briefs(
+        lead, extra_domains, already_used, user_id, message, ctx)
+    if addenda:
+        response["message"] = _with_addenda(response.get("message", ""), addenda)
+    if extra_agents:
+        response["agents_used"] = list(dict.fromkeys([*response.get("agents_used", []), *extra_agents]))
+    return response
+
+
 # ── routes ──────────────────────────────────────────────────────────────────
 
-async def _route_ask(user_id, message, ctx, ctx_summary, warnings, mode: str = "full") -> dict:
+async def _route_ask(user_id, message, ctx, ctx_summary, warnings, mode: str = "full",
+                     extra_domains: list[str] | None = None) -> dict:
+    if mode == "dashboard":
+        return await _route_dashboard_fast(user_id, message, ctx, ctx_summary, warnings, "assistant")
+
     res = await tracker.track_agent_call(
         from_agent="orchestrator",
         to_agent="assistant",
@@ -548,12 +1197,13 @@ async def _route_ask(user_id, message, ctx, ctx_summary, warnings, mode: str = "
         call=lambda: asyncio.to_thread(answer_question, user_id, message, mode),
         inputChars=len(message),
     )
-    return _envelope(
+    response = _envelope(
         res.get("answer") or "I couldn't find an answer for that.",
         intent="ask", agents=[_AGENT_LABELS["ask"]], ctx_summary=ctx_summary,
         warnings=warnings, sources=res.get("sources") or [],
         suggested=["How's my recovery looking?", "Summarize my recent form"],
     )
+    return await _augment_with_extras(response, "assistant", extra_domains, [], user_id, message, ctx)
 
 
 # ── real specialist-to-specialist chaining ──────────────────────────────────
@@ -622,7 +1272,11 @@ async def _chain_coaching(ctx: dict, message: str, context_type: str,
     return verdict
 
 
-async def _route_action(user_id, message, agent, ctx, ctx_summary, warnings, booking_intent: str = "general") -> dict:
+async def _route_action(user_id, message, agent, ctx, ctx_summary, warnings, booking_intent: str = "general",
+                        extra_domains: list[str] | None = None, mode: str = "full") -> dict:
+    if mode in {"dashboard", "fast"} and agent in {"recovery", "performance"}:
+        return await _route_dashboard_fast(user_id, message, ctx, ctx_summary, warnings, agent)
+
     if agent == "recovery":
         v = await tracker.track_agent_call(
             from_agent="orchestrator",
@@ -667,12 +1321,13 @@ async def _route_action(user_id, message, agent, ctx, ctx_summary, warnings, boo
             elif isinstance(coaching_res, Exception):
                 log.warning("recovery→coaching chain failed: %s", coaching_res)
 
-        return _envelope(
+        response = _envelope(
             _with_addenda(_format_recovery(v), addenda),
             intent="action", agents=list(dict.fromkeys(agents_used)),
             ctx_summary=ctx_summary, warnings=warnings,
             suggested=["What should I change in training this week?", "Find me an upcoming event"],
         )
+        return await _augment_with_extras(response, "recovery", extra_domains, agents_used, user_id, message, ctx)
 
     if agent == "performance":
         v = await tracker.track_agent_call(
@@ -703,12 +1358,13 @@ async def _route_action(user_id, message, agent, ctx, ctx_summary, warnings, boo
             except Exception:  # noqa: BLE001 — a chain hop must never break the answer
                 log.exception("performance→coaching chain failed")
 
-        return _envelope(
+        response = _envelope(
             _with_addenda(_format_performance(v), addenda),
             intent="action", agents=list(dict.fromkeys(agents_used)),
             ctx_summary=ctx_summary, warnings=warnings,
             suggested=["Where am I losing points?", "Am I overtraining?"],
         )
+        return await _augment_with_extras(response, "performance", extra_domains, agents_used, user_id, message, ctx)
 
     if agent == "sponsorship":
         media = [e for e in (ctx.get("entries") or []) if e.get("section") == "media_notes"]
@@ -721,11 +1377,12 @@ async def _route_action(user_id, message, agent, ctx, ctx_summary, warnings, boo
             ),
         )
         await asyncio.to_thread(_persist_sponsorship, user_id, v)
-        return _envelope(
+        response = _envelope(
             _format_sponsorship(v), intent="action", agents=[_AGENT_LABELS["sponsorship"]],
             ctx_summary=ctx_summary, warnings=warnings,
             suggested=["Make the email shorter", "Find another sponsor fit"],
         )
+        return await _augment_with_extras(response, "sponsorship", extra_domains, ["sponsorship"], user_id, message, ctx)
 
     if agent == "logistics":
         response = await tracker.track_agent_call(
@@ -734,27 +1391,30 @@ async def _route_action(user_id, message, agent, ctx, ctx_summary, warnings, boo
             step="Planning travel and booking options",
             call=lambda: _plan_travel(ctx, ctx_summary, warnings, booking_intent),
         )
-        return response
+        return await _augment_with_extras(response, "logistics", extra_domains, ["logistics"], user_id, message, ctx)
 
     # Unrecognized specialist — fall back to answering from the journal.
-    return await _route_ask(user_id, message, ctx, ctx_summary, warnings)
+    return await _route_ask(user_id, message, ctx, ctx_summary, warnings, mode, extra_domains=extra_domains)
 
 
-async def _route_log(user_id, message, ctx_summary, warnings) -> dict:
+async def _route_log(user_id, message, ctx_summary, warnings, ctx=None, extra_domains: list[str] | None = None) -> dict:
     entries = await tracker.track_agent_call(
         from_agent="orchestrator",
         to_agent="librarian",
         step="Classifying and filing your note",
         call=lambda: claude.classify(message),
     )
+    # Supporting analysis only runs when context was supplied (real orchestrator path).
+    xd = extra_domains if ctx is not None else None
     if not entries:
-        return _envelope(
+        response = _envelope(
             "Summary\n"
             "I did not find enough detail to file that note.\n\n"
             "Next Step\n"
             "Add the practice, match, recovery, or schedule detail you want saved.",
             intent="log", agents=[_AGENT_LABELS["log"]], ctx_summary=ctx_summary, warnings=warnings,
         )
+        return await _augment_with_extras(response, "librarian", xd, ["librarian"], user_id, message, ctx)
     await asyncio.to_thread(_store_entries, user_id, entries)
     sections = sorted({e["section"] for e in entries})
     lines = [
@@ -769,10 +1429,11 @@ async def _route_log(user_id, message, ctx_summary, warnings) -> dict:
         "Next Step",
         "Ask what changed in your recovery, performance, or schedule.",
     ]
-    return _envelope(
+    response = _envelope(
         "\n".join(lines), intent="log", agents=[_AGENT_LABELS["log"]],
         ctx_summary=ctx_summary, warnings=warnings, suggested=_suggested_after_log(sections),
     )
+    return await _augment_with_extras(response, "librarian", xd, ["librarian"], user_id, message, ctx)
 
 
 # ── travel: plan only, never book (task §7 / safety §10) ────────────────────
@@ -1034,6 +1695,8 @@ def _store_entries(user_id: str, entries: list[dict]) -> int:
             stored += 1
         except Exception as ex:  # noqa: BLE001
             log.warning("store entry failed: %s", ex)
+    if stored:
+        athlete_context.clear_context_cache(resolved_user_id)
     return stored
 
 
@@ -1044,6 +1707,7 @@ def _persist_output(user_id, agent_name, section, summary, severity, recommended
             "summary": summary, "severity": severity,
             "recommended_action": recommended_action, "related_entry_ids": [],
         }).execute()
+        athlete_context.clear_context_cache(user_id)
     except Exception as e:  # noqa: BLE001
         log.warning("persist %s output failed: %s", agent_name, e)
 
@@ -1056,5 +1720,6 @@ def _persist_sponsorship(user_id, v: dict) -> None:
             "reason": v.get("reason", ""), "draft_email": v.get("draft_email", ""),
             "status": "drafted",
         }).execute()
+        athlete_context.clear_context_cache(user_id)
     except Exception as e:  # noqa: BLE001
         log.warning("persist sponsorship failed: %s", e)

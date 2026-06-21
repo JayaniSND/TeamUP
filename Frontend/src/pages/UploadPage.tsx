@@ -11,6 +11,7 @@ import {
   Loader2,
   Mic,
   PenLine,
+  Send,
   Trash2,
   UploadCloud,
 } from "lucide-react";
@@ -18,12 +19,13 @@ import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Button } from "@/components/ui/Button";
 import { FileDrop } from "@/components/upload/FileDrop";
 import { VoiceRecorder } from "@/components/upload/VoiceRecorder";
-import { convertPhoto, convertVoice } from "@/lib/api";
+import { convertPhoto, convertVoice, submitUploadEntry, type IngestInputType } from "@/lib/api";
 import { athleteData } from "@/data/mockAthleteData";
 import { cn } from "@/lib/utils";
 
 type Method = "photo" | "voice" | "text";
 type Status = "idle" | "loading" | "done" | "error";
+type SubmitStatus = "idle" | "submitting" | "submitted" | "error";
 
 const METHODS: { id: Method; label: string; icon: typeof Mic; desc: string }[] = [
   { id: "photo", label: "Note / Photo", icon: ImagePlus, desc: "Image or .txt note" },
@@ -54,19 +56,29 @@ export default function UploadPage() {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
   const [source, setSource] = useState("");
+  const [sourceInputType, setSourceInputType] = useState<IngestInputType>("text");
   const [copied, setCopied] = useState(false);
+  const [submitStatus, setSubmitStatus] = useState<SubmitStatus>("idle");
+  const [submitError, setSubmitError] = useState("");
+  const [submittedSummary, setSubmittedSummary] = useState("");
 
   const busy = status === "loading";
+  const submitting = submitStatus === "submitting";
+  const canSubmit = !!result.trim() && !busy && !submitting && submitStatus !== "submitted";
 
   useEffect(() => {
     setMethod(routeMethod);
   }, [routeMethod]);
 
-  const runConvert = useCallback(async (fn: () => Promise<string>, label: string) => {
+  const runConvert = useCallback(async (fn: () => Promise<string>, label: string, inputType: IngestInputType) => {
     setStatus("loading");
     setError("");
     setSource(label);
+    setSourceInputType(inputType);
     setCopied(false);
+    setSubmitStatus("idle");
+    setSubmitError("");
+    setSubmittedSummary("");
     try {
       const text = await fn();
       setResult(text);
@@ -82,17 +94,24 @@ export default function UploadPage() {
     }
   }, []);
 
-  const onPhoto = useCallback((file: File) => runConvert(() => convertPhoto(file), `Photo · ${file.name}`), [runConvert]);
+  const onPhoto = useCallback(
+    (file: File) => runConvert(() => convertPhoto(file), `Photo · ${file.name}`, "text"),
+    [runConvert]
+  );
   const onVoice = useCallback(
-    (blob: Blob, name: string) => runConvert(() => convertVoice(blob, name), `Voice · ${name}`),
+    (blob: Blob, name: string) => runConvert(() => convertVoice(blob, name), `Voice · ${name}`, "voice"),
     [runConvert]
   );
 
   const onText = (v: string) => {
     setResult(v);
     setSource("Typed note");
+    setSourceInputType("text");
     setError("");
     setCopied(false);
+    setSubmitStatus("idle");
+    setSubmitError("");
+    setSubmittedSummary("");
     setStatus(v.trim() ? "done" : "idle");
   };
 
@@ -112,7 +131,33 @@ export default function UploadPage() {
     setStatus("idle");
     setError("");
     setSource("");
+    setSourceInputType("text");
     setCopied(false);
+    setSubmitStatus("idle");
+    setSubmitError("");
+    setSubmittedSummary("");
+  };
+
+  const submit = async () => {
+    const text = result.trim();
+    if (!text || submitting) return;
+
+    setSubmitStatus("submitting");
+    setSubmitError("");
+    setSubmittedSummary("");
+
+    try {
+      const response = await submitUploadEntry({ text, inputType: sourceInputType });
+      const sections = response.sections.map((section) => section.replace(/_/g, " ")).join(", ");
+      const count = response.entriesCount || response.entries.length || 1;
+      setSubmittedSummary(
+        `Filed ${count} ${count === 1 ? "entry" : "entries"}${sections ? ` to ${sections}` : ""}.`
+      );
+      setSubmitStatus("submitted");
+    } catch (e) {
+      setSubmitStatus("error");
+      setSubmitError(e instanceof Error ? e.message : "Submit failed. Please try again.");
+    }
   };
 
   return (
@@ -159,7 +204,7 @@ export default function UploadPage() {
               {/* no-database notice */}
               <div className="fade-up mb-4 flex items-start gap-2 rounded-xl bg-accent/[0.06] px-3 py-2 text-xs leading-relaxed text-text-muted ring-1 ring-accent/14">
                 <Info className="mt-px size-3.5 shrink-0 text-accent" />
-                Preview only — nothing is saved yet. This is the capture flow; converted text stays on this page.
+                Capture stays in preview until you submit it. Submit files the note through the backend librarian flow.
               </div>
 
               <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
@@ -287,6 +332,40 @@ export default function UploadPage() {
                       </div>
                     )}
                   </div>
+
+                  <footer className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-h-5 text-xs leading-relaxed">
+                      {submitStatus === "submitted" && (
+                        <span className="inline-flex items-center gap-1.5 font-medium text-accent">
+                          <Check className="size-3.5" />
+                          {submittedSummary}
+                        </span>
+                      )}
+                      {submitStatus === "error" && (
+                        <span className="inline-flex items-center gap-1.5 font-medium text-negative">
+                          <AlertCircle className="size-3.5" />
+                          {submitError}
+                        </span>
+                      )}
+                    </div>
+
+                    <Button
+                      variant="primary"
+                      size="md"
+                      onClick={submit}
+                      disabled={!canSubmit}
+                      className="shrink-0"
+                    >
+                      {submitting ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : submitStatus === "submitted" ? (
+                        <Check className="size-4" />
+                      ) : (
+                        <Send className="size-4" />
+                      )}
+                      {submitting ? "Submitting" : submitStatus === "submitted" ? "Submitted" : "Submit entry"}
+                    </Button>
+                  </footer>
                 </section>
               </div>
             </div>

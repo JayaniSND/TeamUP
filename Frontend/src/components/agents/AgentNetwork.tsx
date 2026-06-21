@@ -39,7 +39,7 @@ export const AgentNetwork = memo(function AgentNetwork({
   }
 
   return (
-    <div className="relative mx-auto aspect-square w-full max-w-[320px]">
+    <div className="relative mx-auto aspect-square w-full max-w-[400px]">
       <svg viewBox="0 0 100 100" className="absolute inset-0 size-full overflow-visible" aria-hidden>
         {connections.map((c) => {
           const a = pt(c.from);

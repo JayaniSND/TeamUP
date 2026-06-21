@@ -17,7 +17,10 @@ the suggested `athlete_profiles` schema. Do NOT hard-code a fake identity here.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import logging
+import os
+import time
 
 from database import supabase
 from .user_identity import resolve_user_id
@@ -26,6 +29,18 @@ log = logging.getLogger("athlete_context")
 
 # Calendar event types that count as travel/away commitments.
 _TRAVEL_EVENT_TYPES = {"tournament", "match", "travel", "competition", "away"}
+_CONTEXT_CACHE_TTL_SECONDS = float(os.environ.get("ATHLETE_CONTEXT_CACHE_TTL_SECONDS", "20"))
+_context_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+
+
+def clear_context_cache(user_id: str | None = None) -> None:
+    """Invalidate cached athlete snapshots after writes."""
+    if user_id is None:
+        _context_cache.clear()
+        return
+    resolved = resolve_user_id(user_id)
+    for key in [key for key in _context_cache if key[0] == resolved]:
+        _context_cache.pop(key, None)
 
 
 def _select(table: str, user_id: str, limit: int, section: str | None = None) -> list[dict]:
@@ -84,6 +99,12 @@ def get_athlete_travel_context(user_id: str) -> dict:
     return {"trips": trips, "destinations": destinations}
 
 
+def _travel_from_events(events: list[dict]) -> dict:
+    trips = [e for e in events if (e.get("event_type") or "").lower() in _TRAVEL_EVENT_TYPES]
+    destinations = sorted({e.get("location") for e in trips if e.get("location")})
+    return {"trips": trips, "destinations": destinations}
+
+
 def get_athlete_profile(user_id: str) -> dict:
     """Athlete profile from Supabase if a profile table exists, else a clearly
     marked placeholder (NOT a fabricated identity).
@@ -123,21 +144,67 @@ def get_athlete_profile(user_id: str) -> dict:
 
 # ── bundled context + summary (what the orchestrator loads per request) ─────
 
-def load_athlete_context(user_id: str) -> dict:
+def load_athlete_context(user_id: str, scope: str = "full") -> dict:
     """One real snapshot of the athlete from Supabase. Each value is independent
     so a single empty/missing table never blanks the whole context."""
     resolved_user_id = resolve_user_id(user_id)
-    return {
-        "user_id": resolved_user_id,
-        "profile": get_athlete_profile(resolved_user_id),
-        "entries": get_athlete_notes(resolved_user_id, limit=60),
-        "recovery_logs": get_athlete_recovery_logs(resolved_user_id),
-        "training": get_athlete_training_logs(resolved_user_id),
-        "matches": get_athlete_match_results(resolved_user_id),
-        "metrics": get_athlete_performance_metrics(resolved_user_id),
-        "schedule": get_athlete_schedule(resolved_user_id),
-        "travel": get_athlete_travel_context(resolved_user_id),
-    }
+    scope = scope if scope in {"performance", "recovery", "logistics", "light", "full"} else "full"
+    cache_key = (resolved_user_id, scope)
+    now = time.monotonic()
+    cached = _context_cache.get(cache_key)
+    if cached and now - cached[0] <= _CONTEXT_CACHE_TTL_SECONDS:
+        return deepcopy(cached[1])
+
+    snapshot = {"user_id": resolved_user_id, "profile": {}, "_scope": scope, "_loaded_sections": []}
+    if scope == "performance":
+        snapshot.update({
+            "entries": [],
+            "recovery_logs": [],
+            "training": get_athlete_training_logs(resolved_user_id, limit=3),
+            "matches": get_athlete_match_results(resolved_user_id, limit=3),
+            "metrics": get_athlete_performance_metrics(resolved_user_id, limit=8),
+            "schedule": [],
+            "travel": {"trips": [], "destinations": []},
+            "_loaded_sections": ["training", "matches", "metrics"],
+        })
+    elif scope == "recovery":
+        snapshot.update({
+            "entries": get_athlete_notes(resolved_user_id, section="recovery", limit=8),
+            "recovery_logs": get_athlete_recovery_logs(resolved_user_id, limit=5),
+            "training": get_athlete_training_logs(resolved_user_id, limit=5),
+            "matches": [],
+            "metrics": get_athlete_performance_metrics(resolved_user_id, limit=8),
+            "schedule": [],
+            "travel": {"trips": [], "destinations": []},
+            "_loaded_sections": ["entries", "recovery_logs", "training", "metrics"],
+        })
+    elif scope == "logistics":
+        schedule = get_athlete_schedule(resolved_user_id, limit=5)
+        snapshot.update({
+            "entries": [],
+            "recovery_logs": [],
+            "training": [],
+            "matches": [],
+            "metrics": [],
+            "schedule": schedule,
+            "travel": _travel_from_events(schedule),
+            "_loaded_sections": ["schedule"],
+        })
+    else:
+        schedule = get_athlete_schedule(resolved_user_id, limit=8)
+        snapshot.update({
+            "profile": get_athlete_profile(resolved_user_id),
+            "entries": get_athlete_notes(resolved_user_id, limit=20),
+            "recovery_logs": get_athlete_recovery_logs(resolved_user_id, limit=8),
+            "training": get_athlete_training_logs(resolved_user_id, limit=8),
+            "matches": get_athlete_match_results(resolved_user_id, limit=8),
+            "metrics": get_athlete_performance_metrics(resolved_user_id, limit=16),
+            "schedule": schedule,
+            "travel": _travel_from_events(schedule),
+            "_loaded_sections": ["entries", "recovery_logs", "training", "matches", "metrics", "schedule"],
+        })
+    _context_cache[cache_key] = (now, deepcopy(snapshot))
+    return snapshot
 
 
 def summarize_context(ctx: dict) -> tuple[str, list[str]]:
@@ -152,12 +219,13 @@ def summarize_context(ctx: dict) -> tuple[str, list[str]]:
         "metrics": len(ctx.get("metrics") or []),
         "schedule": len(ctx.get("schedule") or []),
     }
-    summary = ", ".join(f"{k}: {v}" for k, v in counts.items())
+    loaded = set(ctx.get("_loaded_sections") or counts.keys())
+    summary = ", ".join(f"{k}: {v}" for k, v in counts.items() if k in loaded)
 
     warnings: list[str] = []
     if (ctx.get("profile") or {}).get("data_status") == "no_profile_table":
         warnings.append("No athlete profile on record yet (profile table not set up).")
-    empty = [k for k, v in counts.items() if v == 0]
+    empty = [k for k, v in counts.items() if k in loaded and v == 0]
     if empty:
         warnings.append("No data yet for: " + ", ".join(empty) + ".")
     if all(v == 0 for v in counts.values()):

@@ -12,6 +12,60 @@ import type { AgentTraceEntry } from "@/types/athlete";
 
 export const API_BASE = (import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 
+const unique = <T,>(items: T[]): T[] => [...new Set(items)];
+
+const apiBaseCandidates = () => {
+  // VITE_API_BASE (if set) is always tried first and is the authoritative override.
+  const bases = [API_BASE];
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location;
+    const hostForUrl = hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
+    if (protocol === "https:") {
+      // A tunneled/deployed https page CANNOT call http://127.0.0.1 (mixed content
+      // is blocked), so the localhost fallbacks below are useless here. Instead try
+      // the same host over https — covers a backend reverse-proxied at the same
+      // origin or exposed on :8000 of the same tunnel host.
+      if (hostForUrl) bases.push(`https://${hostForUrl}:8000`, `https://${hostForUrl}`);
+    } else {
+      if (hostForUrl) bases.push(`http://${hostForUrl}:8000`);
+      bases.push("http://localhost:8000", "http://127.0.0.1:8000");
+    }
+  }
+  return unique(bases.map((base) => base.replace(/\/$/, "")));
+};
+
+async function fetchJsonWithApiFallback(
+  path: string,
+  body: Record<string, unknown>,
+  opts: { timeoutMs?: number; serviceName: string }
+): Promise<{ res: Response; payload: Record<string, unknown> | null }> {
+  let timedOut = false;
+
+  for (const base of apiBaseCandidates()) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), opts.timeoutMs ?? 20_000);
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      return { res, payload };
+    } catch (e) {
+      timedOut ||= (e as Error)?.name === "AbortError";
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  if (timedOut) {
+    throw new ApiError(`${opts.serviceName} timed out. Keep this page open and retry verification.`, 0);
+  }
+  throw new ApiError(`Could not reach the ${opts.serviceName} at ${apiBaseCandidates().join(" or ")}.`, 0);
+}
+
 /** Error carrying the backend's HTTP status so the UI can tailor its message. */
 export class ApiError extends Error {
   status: number;
@@ -60,6 +114,72 @@ export function convertPhoto(file: File): Promise<string> {
 /** Upload/record audio → transcript (Deepgram). */
 export function convertVoice(file: Blob, filename = "recording.webm"): Promise<string> {
   return postFile("/convert/voice", file, filename);
+}
+
+export type IngestInputType = "text" | "voice";
+
+export interface IngestResult {
+  rawInputId?: string;
+  inputType: IngestInputType;
+  entriesCount: number;
+  sections: string[];
+  entries: {
+    entryId?: string;
+    section: string;
+    text: string;
+  }[];
+}
+
+/** Submit converted or typed text for classification + filing in the backend. */
+export async function submitUploadEntry({
+  text,
+  inputType,
+  userId = USER_ID,
+}: {
+  text: string;
+  inputType: IngestInputType;
+  userId?: string;
+}): Promise<IngestResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/ingest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, input_type: inputType, text }),
+    });
+  } catch {
+    throw new ApiError(
+      `Could not reach the backend at ${API_BASE}. Is it running? (uvicorn main:app --port 8000)`,
+      0
+    );
+  }
+
+  const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  const error = typeof payload?.error === "string" ? payload.error : undefined;
+
+  if (!res.ok || error) {
+    const detail =
+      (typeof payload?.detail === "string" ? payload.detail : undefined) ||
+      error ||
+      `Submit failed (${res.status})`;
+    throw new ApiError(detail, res.status);
+  }
+
+  const entries = Array.isArray(payload?.entries)
+    ? (payload.entries as Record<string, unknown>[]).map((entry) => ({
+        entryId: typeof entry.entry_id === "string" ? entry.entry_id : undefined,
+        section: typeof entry.section === "string" ? entry.section : "training",
+        text: typeof entry.text === "string" ? entry.text : "",
+      }))
+    : [];
+
+  return {
+    rawInputId: typeof payload?.raw_input_id === "string" ? payload.raw_input_id : undefined,
+    inputType,
+    entriesCount: Number(payload?.entries_count) || entries.length,
+    sections: _strArray(payload?.sections),
+    entries,
+  };
 }
 
 // ── AI chat → orchestrator ───────────────────────────────────────────────────
@@ -499,18 +619,11 @@ export async function createBookingCheckout(
     },
   };
 
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE}/bookings/checkout`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    throw new ApiError(`Could not reach the booking service at ${API_BASE}.`, 0);
-  }
-
-  const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  const { res, payload } = await fetchJsonWithApiFallback(
+    "/bookings/checkout",
+    body,
+    { serviceName: "booking service", timeoutMs: 20_000 }
+  );
   if (!res.ok) {
     const detail = typeof payload?.detail === "string" ? payload.detail : `Checkout failed (${res.status})`;
     throw new ApiError(detail, res.status);
@@ -541,25 +654,11 @@ export interface ConfirmBookingResult {
 
 /** Verify a returned Stripe Checkout Session and mark the booking paid. */
 export async function confirmBooking(sessionId: string): Promise<ConfirmBookingResult> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 20_000);
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE}/bookings/confirm`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId }),
-      signal: controller.signal,
-    });
-  } catch (e) {
-    if ((e as Error)?.name === "AbortError") {
-      throw new ApiError("Payment verification timed out. Please try returning to the dashboard and checking again.", 0);
-    }
-    throw new ApiError(`Could not reach the booking verification service at ${API_BASE}.`, 0);
-  } finally {
-    window.clearTimeout(timeout);
-  }
-  const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  const { res, payload } = await fetchJsonWithApiFallback(
+    "/bookings/confirm",
+    { session_id: sessionId },
+    { serviceName: "booking verification service", timeoutMs: 20_000 }
+  );
   if (!res.ok || payload?.ok === false) {
     const detail =
       (typeof payload?.detail === "string" && payload.detail) ||

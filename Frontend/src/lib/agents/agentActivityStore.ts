@@ -30,7 +30,22 @@ export { AGENT_BY_ID };
 export type { AgentId } from "./backendAgentRegistry";
 export type AgentNodeMeta = AgentMeta;
 
-export type AgentActivityStatus = "idle" | "in_progress" | "completed" | "error";
+export type AgentActivityStatus = "idle" | "planned" | "in_progress" | "completed" | "error";
+
+// Status precedence — a later event can only ADVANCE a node/line, never regress it.
+// Lets the optimistic "planned" pre-seed and out-of-order live events settle
+// sensibly: planned → in_progress → completed, with error/completed sticking.
+const STATUS_RANK: Record<AgentActivityStatus, number> = {
+  idle: 0,
+  planned: 1,
+  in_progress: 2,
+  completed: 3,
+  error: 4,
+};
+const mergeStatus = (
+  cur: AgentActivityStatus | undefined,
+  next: AgentActivityStatus
+): AgentActivityStatus => (STATUS_RANK[next] >= STATUS_RANK[cur ?? "idle"] ? next : (cur ?? "idle"));
 
 /** A communication line between two agents that are actually talking. */
 export interface AgentConnection {
@@ -39,8 +54,9 @@ export interface AgentConnection {
   status: AgentActivityStatus;
 }
 
-/** Where the current activity came from — drives honest status-box copy. */
-export type AgentActivitySource = "idle" | "trace" | "inferred";
+/** Where the current activity came from — drives honest status-box copy.
+ * "planned" = the optimistic pre-call prediction; "trace" = real backend events. */
+export type AgentActivitySource = "idle" | "planned" | "trace" | "inferred";
 
 export interface AgentActivityState {
   currentFlowId: string | null;
@@ -127,39 +143,66 @@ export function resetAgentActivity(): void {
 }
 
 /**
- * Optimistically light the Orchestrator node the instant a message is sent, so
- * the graph reacts immediately — before the first live SSE event arrives. The
- * live stream then fills in the specialists as the backend actually calls them.
- * Seeds ONLY the orchestrator (a single node is not treated as "already
- * streamed"), so a failed stream still falls back to the real backend trace.
+ * Render the PLANNED agent network the instant a message is sent — the predicted
+ * orchestrator → specialist edges — so the graph shows the whole expected workflow
+ * up front, before any backend round-trip. Nodes start "planned" (dim/pending) and
+ * are advanced to in_progress/completed as the real live trace arrives. Marked
+ * `source: "planned"` so the panel knows real events haven't streamed yet.
  */
-export function seedFlow(flowId: string, messageId: string): void {
+export function seedPlannedFlow(flowId: string, messageId: string, planned: AgentId[]): void {
+  const agents: AgentId[] = ["orchestrator"];
+  const nodeStatus: Partial<Record<AgentId, AgentActivityStatus>> = { orchestrator: "in_progress" };
+  const connections: AgentConnection[] = [];
+  const targets = planned.length ? planned : (["assistant"] as AgentId[]);
+  let firstTarget: AgentId | null = null;
+
+  for (const id of targets) {
+    if (!id || id === "orchestrator" || agents.includes(id)) continue;
+    if (!firstTarget) firstTarget = id;
+    agents.push(id);
+    const status = id === firstTarget ? "in_progress" : "planned";
+    nodeStatus[id] = status;
+    connections.push({ from: "orchestrator", to: id, status });
+  }
   state = {
     ...initialState,
     currentFlowId: flowId,
     currentMessageId: messageId,
     status: "in_progress",
-    activeStep: "Routing your request",
-    activeAgent: "orchestrator",
-    agents: ["orchestrator"],
-    nodeStatus: { orchestrator: "in_progress" },
-    source: "trace",
+    activeStep: firstTarget ? "Starting live agent workflow" : "Planning which agents to use",
+    activeAgent: firstTarget ?? "orchestrator",
+    agents,
+    nodeStatus,
+    connections,
+    currentFlow: flowLabelFor(agents),
+    source: "planned",
     lastUpdated: Date.now(),
   };
   emit();
 }
 
 const statusFrom = (value?: string): AgentActivityStatus =>
-  value === "completed" ? "completed" : value === "error" ? "error" : "in_progress";
+  value === "completed"
+    ? "completed"
+    : value === "error"
+      ? "error"
+      : value === "planned"
+        ? "planned"
+        : "in_progress";
 
 const connectionKey = (from: AgentId, to: AgentId) => [from, to].sort().join("<->");
 
 export function applyAgentTraceEvent(entry: AgentTraceEntry): void {
   const status = statusFrom(entry.status);
-  const from = resolveAgentId(entry.from) ?? resolveAgentId(entry.fromAgent);
-  const to = resolveAgentId(entry.to) ?? resolveAgentId(entry.toAgent);
+  let from = resolveAgentId(entry.from) ?? resolveAgentId(entry.fromAgent);
+  let to = resolveAgentId(entry.to) ?? resolveAgentId(entry.toAgent);
   const node = resolveAgentId(entry.agent) ?? resolveAgentId(entry.agentName);
   const responding = entry.type === "agent_response_received";
+  const composing = entry.type === "final_response_started";
+  // A pre-call PLAN event (orchestrator predicting which agents it will use) — it
+  // seeds nodes/edges but does NOT count as real activity having streamed yet.
+  const isPlan =
+    status === "planned" || entry.type === "agent_planned" || entry.type === "orchestrator_plan";
 
   setAgentActivity((prev) => {
     const agents = [...prev.agents];
@@ -172,51 +215,84 @@ export function applyAgentTraceEvent(entry: AgentTraceEntry): void {
     for (const conn of prev.connections) connectionMap.set(connectionKey(conn.from, conn.to), conn);
 
     let activeAgent: AgentId | null = prev.activeAgent;
+    if (composing && (!from || !to)) {
+      const lastRealConnection = [...prev.connections]
+        .reverse()
+        .find((c) => c.from !== "orchestrator" || c.to !== "orchestrator");
+      const peer =
+        lastRealConnection?.from === "orchestrator"
+          ? lastRealConnection.to
+          : lastRealConnection?.from ??
+            agents.find((id) => id !== "orchestrator" && nodeStatus[id] && nodeStatus[id] !== "planned");
+      if (peer) {
+        from = peer;
+        to = "orchestrator";
+      }
+    }
+
     if (from && to) {
       add(from);
       add(to);
       const key = connectionKey(from, to);
       const existing = connectionMap.get(key);
-      connectionMap.set(key, { from: existing?.from ?? from, to: existing?.to ?? to, status });
+      const mergedConn = composing && status === "in_progress" ? "in_progress" : mergeStatus(existing?.status, status);
+      connectionMap.set(key, { from: existing?.from ?? from, to: existing?.to ?? to, status: mergedConn });
       const target = responding ? from : to;
-      nodeStatus[target] = status;
-      if (!responding && status === "in_progress") nodeStatus[from] = "in_progress";
-      activeAgent = status === "completed" ? null : target;
+      nodeStatus[target] = composing && status === "in_progress" ? "in_progress" : mergeStatus(nodeStatus[target], status);
+      if (status === "in_progress") {
+        if (!responding) {
+          nodeStatus[from] = composing ? "in_progress" : mergeStatus(nodeStatus[from], "in_progress");
+        }
+        activeAgent = target;
+      } else if (status === "completed") {
+        activeAgent = null;
+      }
+      // planned/idle: keep the orchestrator pulsing; don't promote a planned node.
     } else if (node) {
       add(node);
-      nodeStatus[node] = status;
-      activeAgent = status === "in_progress" ? node : null;
+      nodeStatus[node] = mergeStatus(nodeStatus[node], status);
+      if (status === "in_progress") activeAgent = node;
+      else if (status === "completed") activeAgent = null;
     }
 
     const completed = entry.type === "final_response_completed";
     const errored = status === "error";
     const nextStatus: AgentActivityStatus = errored ? "error" : completed ? "completed" : "in_progress";
-    const flow = flowLabelFor(agents) ?? prev.currentFlow;
 
-    // When the flow finishes, settle every participating node + line to completed
-    // (green), preserving any error state. Without this, a fan-out parent left
-    // mid-chain (e.g. Recovery after firing Fitness + Coaching) could linger
-    // "in_progress" even though the whole workflow is done.
+    // When the flow finishes, settle to a clean "done" state: DROP any predicted
+    // node that never actually ran (still "planned") so the final picture shows only
+    // the agents that really worked, then turn every survivor + line green
+    // (preserving error). This is the "finished communicating" moment, right as the
+    // answer lands.
+    let outAgents = agents;
     let outNodeStatus = nodeStatus;
     let outConnections = [...connectionMap.values()];
     if (completed) {
+      outAgents = agents.filter(
+        (id) => id === "orchestrator" || (nodeStatus[id] && nodeStatus[id] !== "planned")
+      );
       outNodeStatus = {};
-      for (const id of agents) outNodeStatus[id] = nodeStatus[id] === "error" ? "error" : "completed";
-      outConnections = outConnections.map((c) => (c.status === "error" ? c : { ...c, status: "completed" }));
+      for (const id of outAgents) outNodeStatus[id] = nodeStatus[id] === "error" ? "error" : "completed";
+      outConnections = outConnections
+        .filter((c) => outAgents.includes(c.from) && outAgents.includes(c.to) && c.status !== "planned")
+        .map((c) => (c.status === "error" ? c : { ...c, status: "completed" }));
     }
+    const flow = flowLabelFor(outAgents) ?? prev.currentFlow;
 
     return {
       currentFlowId: entry.flowId ?? prev.currentFlowId,
       currentMessageId: entry.messageId ?? prev.currentMessageId,
       latestEvent: entry.type ?? prev.latestEvent,
-      agents,
+      agents: outAgents,
       nodeStatus: outNodeStatus,
       connections: outConnections,
       activeAgent: completed ? null : activeAgent,
       activeStep: entry.step || prev.activeStep,
       status: nextStatus,
       currentFlow: flow,
-      source: "trace",
+      // A plan event keeps the prior source (still "planned"); only REAL activity
+      // promotes the source to "trace" (what the panel uses to detect live streaming).
+      source: isPlan ? prev.source : "trace",
     };
   });
 }

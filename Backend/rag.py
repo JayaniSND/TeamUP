@@ -44,8 +44,8 @@ DIM: int = 384            # all-MiniLM-L6-v2 output dimension
 INDEX_NAME: str = "entries_idx"
 CACHE_INDEX_NAME: str = "chat_cache_idx"
 CACHE_THRESHOLD: float = 0.15   # cosine distance below this = cache hit
-REDIS_CONNECT_TIMEOUT: float = float(os.environ.get("REDIS_CONNECT_TIMEOUT", "3"))
-REDIS_SOCKET_TIMEOUT: float = float(os.environ.get("REDIS_SOCKET_TIMEOUT", "3"))
+REDIS_CONNECT_TIMEOUT: float = float(os.environ.get("REDIS_CONNECT_TIMEOUT", "0.5"))
+REDIS_SOCKET_TIMEOUT: float = float(os.environ.get("REDIS_SOCKET_TIMEOUT", "0.5"))
 
 _model = None          # sentence-transformer, loaded lazily on first embed call
 _index = None          # RedisVL SearchIndex for journal entries

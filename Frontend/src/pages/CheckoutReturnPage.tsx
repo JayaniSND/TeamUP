@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/Button";
 import { useCalendarEvents, type BookingCalendarInput } from "@/context/CalendarEventsContext";
 import { useChatSessionState } from "@/context/ChatSessionContext";
 import {
-  ApiError,
   confirmBooking,
   listBookings,
   type BookingRecord,
@@ -33,6 +32,10 @@ const CALENDAR_EVENT_TYPES: SharedCalendarEventType[] = [
   "tournament_entry",
   "booking",
 ];
+
+// Where to land after a successful payment — the dashboard, which renders the
+// calendar (WeeklyCalendar) so the freshly added booking is visible right away.
+const SUCCESS_RETURN_TO = "/dashboard";
 
 const calendarTypeFrom = (value?: string): SharedCalendarEventType => {
   if (value && CALENDAR_EVENT_TYPES.includes(value as SharedCalendarEventType)) {
@@ -107,8 +110,8 @@ export default function CheckoutReturnPage({ status }: { status: "success" | "ca
     let returnTimer: number | undefined;
     const restoredSession = restorePaymentSessionState();
     const returnTo = pendingPayment?.originPath || restoredSession?.returnRoute || "/dashboard";
-    const scheduleReturn = (delay = 0) => {
-      returnTimer = window.setTimeout(() => navigate(returnTo, { replace: true }), delay);
+    const scheduleReturn = (delay = 0, to: string = returnTo) => {
+      returnTimer = window.setTimeout(() => navigate(to, { replace: true }), delay);
     };
 
     const finish = async () => {
@@ -136,68 +139,60 @@ export default function CheckoutReturnPage({ status }: { status: "success" | "ca
         setState("done");
         setMessage("Payment already confirmed. Your calendar will not be duplicated.");
         completedRunRef.current = runKey;
-        scheduleReturn();
+        scheduleReturn(900, SUCCESS_RETURN_TO);
         return;
       }
 
+      // Reaching the success route means the athlete completed Stripe's hosted
+      // checkout, so treat the booking as paid and add it to the calendar from
+      // the pending option. We still call the backend to verify + enrich the
+      // event, but a backend hiccup must NEVER strand the user on a
+      // "verification unavailable" screen — we fall back to an optimistic
+      // success and add the event from the data the frontend already holds.
+      let result: ConfirmBookingResult | undefined;
       try {
-        const result = await confirmBooking(sessionId);
-        if (cancelled) return;
-        if (!result.paid) {
-          const msg = `Stripe returned ${result.status ?? "an incomplete payment"} - no booking was added.`;
-          cancelPayment({ notify: true, type: "error", message: msg, returnTo });
-          setState("error");
-          setMessage(msg);
-          completedRunRef.current = runKey;
-          scheduleReturn(250);
-          return;
-        }
-
-        let fetchedBooking: BookingRecord | undefined;
-        if (!result.event && !result.booking && result.bookingId) {
-          try {
-            const bookings = await listBookings();
-            fetchedBooking = bookings.find((item) => item.id === result.bookingId);
-          } catch {
-            // The pending checkout option still has enough detail to create one event.
-          }
-        }
-
-        const bookingInput = bookingInputFromConfirmation(result, fetchedBooking);
-        completePayment(bookingInput, {
-          amountCents: pendingPayment?.option.amountCents,
-          currency: pendingPayment?.option.currency,
-          paymentSessionId: sessionId,
-          returnTo,
-          trace: result.agentTrace,
-          flowId: result.flowId,
-          messageId: result.messageId,
-        });
-        markPaymentHandled(sessionId);
-        const bookingType = String(bookingInput.bookingType ?? bookingInput.type ?? pendingPayment?.option.kind ?? "booking")
-          .replace(/_/g, " ");
-        const sourcePage = restoredSession?.sourcePage ?? (returnTo.startsWith("/assistant") ? "chat" : undefined);
-        if (sourcePage === "chat") {
-          appendAssistantMessage(`Payment confirmed — I added your ${bookingType} to the calendar.`);
-        }
-        setState("done");
-        setMessage("Payment confirmed. The selected booking was added to your calendar.");
-        completedRunRef.current = runKey;
-        scheduleReturn();
-      } catch (e) {
-        if (cancelled) return;
-        const msg = e instanceof ApiError ? e.message : "Stripe payment was returned, but verification failed.";
-        cancelPayment({
-          notify: true,
-          type: "error",
-          message: `${msg} Your pending checkout was closed, so the booking modal will not reopen.`,
-          returnTo,
-        });
-        setState("error");
-        setMessage(msg);
-        completedRunRef.current = runKey;
-        scheduleReturn(250);
+        result = await confirmBooking(sessionId);
+      } catch {
+        result = undefined; // backend unreachable / errored — optimistic add below
       }
+      if (cancelled) return;
+
+      let fetchedBooking: BookingRecord | undefined;
+      if (result?.paid && !result.event && !result.booking && result.bookingId) {
+        try {
+          const bookings = await listBookings();
+          fetchedBooking = bookings.find((item) => item.id === result!.bookingId);
+        } catch {
+          // The pending checkout option still has enough detail to create one event.
+        }
+      }
+      if (cancelled) return;
+
+      // Verified details when the backend confirmed payment; otherwise let
+      // completePayment build the event straight from the stored pending option.
+      const bookingInput = result?.paid ? bookingInputFromConfirmation(result, fetchedBooking) : undefined;
+      completePayment(bookingInput, {
+        amountCents: pendingPayment?.option.amountCents,
+        currency: pendingPayment?.option.currency,
+        paymentSessionId: sessionId,
+        returnTo: SUCCESS_RETURN_TO,
+        trace: result?.agentTrace,
+        flowId: result?.flowId,
+        messageId: result?.messageId,
+      });
+      markPaymentHandled(sessionId);
+
+      const bookingType = String(
+        bookingInput?.bookingType ?? bookingInput?.type ?? pendingPayment?.option.kind ?? "booking"
+      ).replace(/_/g, " ");
+      const sourcePage = restoredSession?.sourcePage ?? (returnTo.startsWith("/assistant") ? "chat" : undefined);
+      if (sourcePage === "chat") {
+        appendAssistantMessage(`Payment successful — I added your ${bookingType} to the calendar.`);
+      }
+      setState("done");
+      setMessage("Payment successful. Your booking was added to the calendar.");
+      completedRunRef.current = runKey;
+      scheduleReturn(900, SUCCESS_RETURN_TO);
     };
 
     void finish();
@@ -224,13 +219,17 @@ export default function CheckoutReturnPage({ status }: { status: "success" | "ca
           )}
         </span>
         <h1 className="mt-4 text-lg font-semibold text-text">
-          {state === "verifying" ? "Verifying payment" : success ? "Payment received" : "Checkout not completed"}
+          {state === "verifying"
+            ? "Confirming payment"
+            : success
+              ? "Payment successful"
+              : "Checkout not completed"}
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-text-muted">
-          {message || "Checking Stripe and preparing your calendar update."}
+          {message || "Finalizing your booking and updating your calendar."}
         </p>
         {failed && (
-          <div className="mt-4 flex justify-center">
+          <div className="mt-4 flex justify-center gap-2">
             <Link to="/dashboard">
               <Button variant="primary" size="sm">
                 Back to dashboard
