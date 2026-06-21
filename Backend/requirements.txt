@@ -13,11 +13,10 @@ openai>=1.40.0
 # to cached results if absent). Run `playwright install chromium` once if used.
 browserbase>=1.0.0
 playwright>=1.40.0
-# stagehand: required ONLY by the (teammate-owned) interactive Logistics agent.
-# 'stagehand-python' does NOT exist on PyPI. Install the package your Logistics
-# code actually imports — candidates are `stagehand` or `stagehand-py`. Left out
-# of the shared install so the core 6-agent loop is never blocked by it.
-# stagehand
+# stagehand drives the Browserbase cloud browser for the interactive Logistics
+# agent (provides `from stagehand import Stagehand`). The package is `stagehand`,
+# NOT `stagehand-python` (which doesn't exist on PyPI).
+stagehand>=3.0.0
 
 # Logistics -> Google Calendar (optional; events still persist to the backend)
 google-api-python-client>=2.130.0
