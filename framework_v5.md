@@ -178,7 +178,7 @@ raw_inputs (
 entries (                      -- core flexible table; Parser writes here first
   id uuid primary key, user_id uuid references users(id),
   raw_input_id uuid references raw_inputs(id),
-  section text, title text, text text, tags text[],
+  section text, text text, tags text[],
   confidence float, metadata jsonb,
   embedded boolean default false,  -- set true once RedisVL embedding stored
   created_at timestamp
