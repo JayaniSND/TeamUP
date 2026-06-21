@@ -111,6 +111,7 @@ Tables must exist in Supabase before running. SQL to create them:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -122,6 +123,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 load_dotenv()
+
+import rag  # noqa: E402 — after load_dotenv so REDIS_URL is available
+
+log = logging.getLogger("main")
 
 # ── Sentry (optional — only init if DSN is present) ────────────────
 _sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
@@ -353,7 +358,11 @@ def ingest(body: IngestIn):
             "created_at": ts,
         }).execute()
         row = (res.data or [{}])[0]
-        written.append({"entry_id": row.get("id"), "section": e["section"], "text": e["text"]})
+        entry_id = row.get("id")
+        stored = rag.store_entry(entry_id, body.user_id, e["section"], e["text"])
+        if stored and entry_id:
+            supabase.table("entries").update({"embedded": True}).eq("id", entry_id).execute()
+        written.append({"entry_id": entry_id, "section": e["section"], "text": e["text"]})
 
     return {
         "raw_input_id": raw_input_id,
@@ -374,7 +383,13 @@ def create_entry(e: EntryIn):
         "embedded": False,
     }).execute()
     row = (res.data or [{}])[0]
-    return {"entry_id": row.get("id")}
+    entry_id = row.get("id")
+
+    stored = rag.store_entry(entry_id, e.user_id, e.section, e.text)
+    if stored and entry_id:
+        supabase.table("entries").update({"embedded": True}).eq("id", entry_id).execute()
+
+    return {"entry_id": entry_id}
 
 
 @app.get("/entries")
@@ -514,39 +529,65 @@ def dashboard_sponsorship(user_id: str):
     return {"opportunities": _query("sponsorship_opportunities", user_id, 20)}
 
 
-# ── /chat : recency-based RAG (no Redis required) ──────────────────
-# Pulls the 15 most recent entries and sends them to Claude with the
-# question. Good enough for demo; swap retrieve() for RedisVL KNN
-# when the embed pipeline is ready.
+# ── /chat : RAG + LangCache ────────────────────────────────────────
+# 1. Check LangCache — if a semantically similar question was answered
+#    recently, return it immediately (no embed, no KNN, no Claude call).
+# 2. Retrieve — KNN search over RedisVL for the athlete's entries most
+#    semantically similar to the question. Falls back to recency query
+#    if Redis is not connected.
+# 3. Generate — Claude reads the retrieved entries and answers. Answer
+#    is grounded in actual journal text, not generic sports knowledge.
+# 4. Cache — store (question, answer) in LangCache for future hits.
 
 @app.post("/chat")
 def chat(body: ChatIn):
-    rows = _query("entries", body.user_id, 15)
-    entries = [_norm_entry(r) for r in rows]
-    if not entries:
-        return {"answer": "I don't have any journal entries for you yet.", "sources": []}
-
     api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    # Step 1 — LangCache check
+    cached = rag.cache_get(body.question, body.user_id)
+    if cached:
+        return {"answer": cached, "sources": [], "cache_hit": True}
+
+    # Step 2 — Retrieve: try KNN first, fall back to recency
+    rag_entries = rag.retrieve(body.question, body.user_id, top_k=8)
+    if rag_entries:
+        entries = rag_entries  # each dict has entry_id, section, text, score
+    else:
+        rows = _query("entries", body.user_id, 15)
+        entries = [_norm_entry(r) for r in rows]
+
+    if not entries:
+        return {"answer": "I don't have any journal entries for you yet.", "sources": [], "cache_hit": False}
+
     if not api_key:
         joined = "; ".join(e["text"] for e in entries[:5])
         return {"answer": f"(no ANTHROPIC_API_KEY set) Recent entries: {joined}",
-                "sources": [e["entry_id"] for e in entries[:5]]}
+                "sources": [e.get("entry_id") for e in entries[:5]], "cache_hit": False}
 
-    context = "\n\n".join(f"[{e['section'].upper()}] {e['text']}" for e in entries)
+    # Step 3 — Generate
+    context = "\n\n".join(f"[{e['section'].upper()}]\n{e['text']}" for e in entries)
     prompt = (
         "You are a sports performance analyst reviewing an athlete's journal. "
         "Answer using ONLY the entries below. Be specific — quote what they wrote. "
         "If the entries lack enough information, say so.\n\n"
         f"JOURNAL ENTRIES:\n{context}\n\nQUESTION: {body.question}"
     )
-    with sentry_sdk.start_span(op="ai.inference", description="Claude chat generation") if sentry_sdk.is_initialized() else _noop():
+    with sentry_sdk.start_span(op="ai.inference", description="Claude chat") if sentry_sdk.is_initialized() else _noop():
         resp = anthropic.Anthropic().messages.create(
             model=os.environ.get("SYNTHESIS_MODEL", "claude-sonnet-4-6"),
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}],
         )
     answer = next((b.text for b in resp.content if b.type == "text"), "")
-    return {"answer": answer, "sources": [e["entry_id"] for e in entries]}
+
+    # Step 4 — Cache
+    rag.cache_set(body.question, body.user_id, answer)
+
+    return {
+        "answer": answer,
+        "sources": [e.get("entry_id") for e in entries],
+        "cache_hit": False,
+    }
 
 
 # ── Demo seed endpoint ─────────────────────────────────────────────
@@ -649,6 +690,27 @@ def admin_seed(user_id: str = DEMO_USER_ID):
     inserted["calendar_events"] = len(r.data or [])
 
     return {"seeded": inserted, "user_id": user_id}
+
+
+@app.post("/admin/backfill")
+def admin_backfill(user_id: str = DEMO_USER_ID):
+    """Embed and store in RedisVL all entries that haven't been vectorised yet.
+
+    Run this once after /admin/seed if Redis wasn't connected during seeding,
+    or whenever entries land in Supabase outside the normal POST /entries flow.
+    """
+    if not rag.REDIS_URL:
+        return {"error": "REDIS_URL not set — RedisVL unavailable"}
+
+    rows = supabase.table("entries").select("*").eq("user_id", user_id).eq("embedded", False).execute()
+    entries = [_norm_entry(r) for r in (rows.data or [])]
+    stored = rag.backfill_entries(entries)
+
+    if stored:
+        ids = [e["entry_id"] for e in entries[:stored]]
+        supabase.table("entries").update({"embedded": True}).in_("id", ids).execute()
+
+    return {"backfilled": stored, "total_unembedded": len(entries), "user_id": user_id}
 
 
 @app.post("/admin/clear")
