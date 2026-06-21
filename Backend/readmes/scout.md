@@ -20,7 +20,9 @@ Send a note like:
 > "Played Tanaka today and lost — what should I do differently next time?"
 
 It replies with the opponent's patterns and a tactical plan to target their
-weaknesses.
+weaknesses. It also writes a `coaching` entry to the database and **chains to
+the Coaching agent**, which will send a follow-up message with a concrete
+game-plan tailored to those weaknesses.
 
 ## Built with
 Fetch.ai uAgents · Agentverse · ASI:One · Browserbase · Anthropic Claude

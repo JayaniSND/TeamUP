@@ -112,18 +112,49 @@ async def _assess(user_id: str, note: str) -> dict:
 
 
 async def _chain(ctx: Context, user_id: str, verdict: dict):
-    """Agent chaining (v5 §6.2): a detected arc suggests the next agent.
-
-    The chain suggestion is surfaced in the reply text (the ➡️ line) rather than
-    auto-dispatched: the downstream agents (esp. the interactive Logistics agent)
-    run their own multi-step conversations, so a fire-and-forget cross-agent send
-    would either be dropped or loop. Surfacing keeps the recommendation visible
-    and lets the athlete pick it up with the right agent directly.
+    """Agent chaining: fire Fitness when injury/fatigue risk is real; surface
+    other chain suggestions (Logistics, Performance) as text recommendations
+    so the interactive agents aren't blindly triggered.
     """
+    risk = verdict.get("risk_level", "none")
     target = verdict.get("chain_to", "none")
-    if target not in ("none", ""):
+
+    # Auto-chain to Fitness + Coaching when physical risk is medium or high.
+    # Both are background agents so fire-and-forget is safe.
+    if risk in ("medium", "high"):
+        body_parts = ", ".join(verdict.get("body_parts") or []) or "flagged area"
+        injury_note = (
+            f"[Recovery→chain] risk={risk}, area={body_parts}. "
+            f"{verdict.get('summary', '')} "
+        )
+
+        fitness_addr = config.address_for("fitness")
+        if fitness_addr:
+            await ctx.send(fitness_addr, make_chat(
+                encode_envelope(user_id, injury_note + "Adjust next week's training plan.",
+                                kind="run", source="recovery")
+            ))
+            ctx.logger.info("Recovery chained → Fitness (risk=%s, parts=%s)", risk, body_parts)
+        else:
+            ctx.logger.info("Fitness agent not configured — skipping chain")
+
+        coaching_addr = config.address_for("coaching")
+        if coaching_addr:
+            await ctx.send(coaching_addr, make_chat(
+                encode_envelope(user_id, injury_note + "Advise strategy adjustments to accommodate this.",
+                                kind="run", source="recovery",
+                                recovery_verdict=verdict)
+            ))
+            ctx.logger.info("Recovery chained → Coaching (risk=%s, parts=%s)", risk, body_parts)
+        else:
+            ctx.logger.info("Coaching agent not configured — skipping chain")
+
+    # For positive arcs (readiness, confidence) surface via text only —
+    # Logistics is interactive and shouldn't be auto-triggered.
+    if target not in ("none", "", "fitness") and verdict.get("chain_message"):
         ctx.logger.info(
-            "Recovery suggests chaining %s → %s", verdict.get("pattern_type"), target
+            "Recovery suggests chaining %s → %s (surfaced in reply text)",
+            verdict.get("pattern_type"), target,
         )
 
 

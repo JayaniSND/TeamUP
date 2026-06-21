@@ -15,25 +15,27 @@ Backend/
 ├── agents/
 │   ├── orchestrator.py     # ASI:One entry point — conducts the whole loop
 │   ├── librarian.py        # Parser: classify a dump → file into sections
-│   ├── recovery.py         # fatigue / soreness / overtraining (wellness)
+│   ├── recovery.py         # fatigue / soreness / overtraining (wellness) + pattern detection
+│   ├── fitness.py          # adjusted training plans — auto-chained from Recovery on injury flag
 │   ├── performance.py      # win/loss + skill trends
 │   ├── sponsorship.py      # brand fit + draft cold email (approval-gated)
+│   ├── scout.py            # opponent research (Browserbase scrape → tactical card)
+│   ├── logistics.py        # tournaments / travel / calendar (Browserbase + Google Calendar)
 │   └── common/
 │       ├── config.py       # SECTIONS, section→agent map, models, addresses
 │       ├── chat.py         # chat-protocol helpers (+ session content)
-│       ├── claude.py       # classify + recovery/performance/sponsorship reasoning
+│       ├── claude.py       # all Claude reasoning: classify, recovery, fitness, performance, sponsorship, scout
 │       └── backend_client.py  # async client for the data backend's FastAPI
 ├── readmes/                # Agentverse "Overview" READMEs (Innovation Lab badge)
 ├── mock_backend.py         # data backend stand-in: full schema + dashboard routes, seeded
+├── main.py                 # real Supabase-backed FastAPI (drop-in for mock_backend)
+├── rag.py                  # embed pipeline: RedisVL store/retrieve + LangCache
 ├── run_local.py            # one-command OFFLINE end-to-end test (Bureau)
 ├── send_dump.py            # message a deployed/mailbox agent and print replies
 ├── asi_ping.py             # optional ASI:One probe for the bonus clip
 ├── requirements.txt
 └── .env.example
 ```
-
-Logistics + Coaching/Chat agents live elsewhere in the project (see
-[`framework.md`](../../framework.md) §6).
 
 ## Sections
 
@@ -50,26 +52,48 @@ logistics · sponsorship · goals · media_notes
                           ▼
                  ┌──────────────────┐
                  │   Orchestrator   │  classify → route → correlate → answer
-                 └───┬───────┬───┬──┘
-            chat ▼   │       │   ▼ chat
-         ┌──────────┐│       │┌──────────────┐
-         │ Librarian││       ││  Logistics   │ (external)
-         │ (Claude) ││       │└──────────────┘
-         └────┬─────┘▼       ▼
-              │ ┌─────────┐ ┌────────────┐ ┌──────────────┐
-              │ │Recovery │ │Performance │ │ Sponsorship  │
-              │ │(Claude) │ │ (Claude)   │ │  (Claude)    │
-              │ └────┬────┘ └─────┬──────┘ └──────┬───────┘
-              └──────┴───────┬────┴───────────────┘
-                             ▼  REST
+                 └───┬──────┬────┬──┘
+            chat ▼   │      │    ▼ chat
+         ┌──────────┐│      │  ┌──────────────┐
+         │ Librarian││      │  │  Logistics   │
+         │ (Claude) ││      │  └──────────────┘
+         └────┬─────┘▼      ▼
+              │ ┌─────────┐ ┌────────────┐ ┌──────────────┐ ┌──────────┐
+              │ │Recovery │ │Performance │ │ Sponsorship  │ │  Scout   │
+              │ │(Claude) │ │ (Claude)   │ │  (Claude)    │ │ (Claude) │
+              │ └──┬──┬───┘ └─────┬──────┘ └──────────────┘ └────┬─────┘
+              │    │  │           │ weakness detected               │ opponent
+              │    │  │           └──────────────┐                 │ exploits
+              │    │  │ injury                   ▼                 │ weakness
+              │    │  └──────────────→  ┌──────────────┐ ←────────┘
+              │    │                    │   Coaching   │  tactical + technique
+              │    │                    │   (Claude)   │
+              │    │                    └──────┬───────┘
+              │    │ injury                    │ physical gap
+              │    ▼  chat protocol            │ identified
+              │ ┌─────────┐                   ▼  chat protocol
+              │ │ Fitness │ ←─────────────────────────────────────
+              │ │(Claude) │  conditioning exercises for technique gap
+              │ └─────────┘
+              └──────────────────┬────────────────────────────
+                                 ▼  REST
             Data backend FastAPI (entries, metrics, matches, agent_outputs, …)
+                                 │
+                            Supabase + RedisVL (RAG)
 ```
 
-The Orchestrator is the single agent a user talks to. It delegates
-classification to the Librarian, then — based on which sections appear —
-triggers Recovery / Performance / Sponsorship / Logistics, correlates their
-replies, and composes one answer. Each worker is **also independently usable**
-through ASI:One on its own.
+The Orchestrator is the single agent a user talks to. Each worker is also
+**independently usable** through ASI:One.
+
+**Agent chains (all real `ctx.send()` calls over the chat protocol):**
+
+| Trigger | Source | Target | Why |
+|---|---|---|---|
+| injury/fatigue risk ≥ medium | Recovery | Fitness | adjust training plan to protect injured area |
+| injury/fatigue risk ≥ medium | Recovery | Coaching | strategy adjustments to accommodate injury |
+| opponent exploits weakness | Scout | Coaching | tactical response + counter-technique advice |
+| consistent weak area in form | Performance | Coaching | targeted technique coaching |
+| physical/conditioning gap in advice | Coaching | Fitness | build exercises for the specific weakness |
 
 ## Setup
 
@@ -93,8 +117,10 @@ python run_local.py
 ```
 
 The demo dump is classified into sections, the win is picked up by Performance,
-the seeded knee history triggers a Recovery flag, the win triggers a Sponsorship
-draft, and the tournament note routes to Logistics — all printed as chat replies.
+the seeded knee history triggers a Recovery flag which **auto-chains to the
+Fitness agent** (producing a modified training plan), the win triggers a
+Sponsorship draft, and the tournament note routes to Logistics — all printed
+as chat replies.
 
 ## Run it as real Agentverse agents (submission path)
 
@@ -102,15 +128,19 @@ One terminal each (workers first, so you can copy their addresses):
 
 ```bash
 python -m agents.recovery        # prints RECOVERY address
+python -m agents.fitness         # prints FITNESS address
+python -m agents.coaching        # prints COACHING address
 python -m agents.performance     # prints PERFORMANCE address
 python -m agents.sponsorship     # prints SPONSORSHIP address
+python -m agents.scout           # prints SCOUT address
 python -m agents.librarian       # prints LIBRARIAN address
 python -m agents.orchestrator    # prints ORCHESTRATOR address
 ```
 
 1. Paste each printed address into `.env` (`LIBRARIAN_ADDRESS`,
-   `RECOVERY_ADDRESS`, `PERFORMANCE_ADDRESS`, `SPONSORSHIP_ADDRESS`, and
-   `LOGISTICS_ADDRESS` once the logistics agent address is available), then restart the Orchestrator.
+   `RECOVERY_ADDRESS`, `FITNESS_ADDRESS`, `COACHING_ADDRESS`,
+   `PERFORMANCE_ADDRESS`, `SPONSORSHIP_ADDRESS`, `SCOUT_ADDRESS`,
+   and `LOGISTICS_ADDRESS`), then restart the Orchestrator.
    Seeds are fixed, so addresses are stable across restarts.
 2. Connect each agent's mailbox to Agentverse and paste the matching file from
    `readmes/` into its **Overview** tab (the Innovation Lab badge is already at

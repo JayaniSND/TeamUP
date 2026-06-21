@@ -13,12 +13,14 @@ and metrics from the journal backend and uses Claude to produce a grounded
 performance summary: overall trend, strongest and weakest area, and one concrete
 improvement focus. Writes a visible insight to the dashboard.
 
+**When a consistent weak area is detected** (and trend is steady or declining), it automatically chains to the **Coaching Agent** with that weakness as context, so the athlete receives targeted technique advice alongside the performance summary.
+
 ## How to use it
 Send a note like:
 
 > "Won my match 6-3, 6-4 but my second serve let me down again."
 
-It replies with your form trend and a focus recommendation.
+It replies with your form trend and a focus recommendation. If a persistent weakness is identified, the Coaching Agent will follow up with technique advice — and Coaching may in turn brief the Fitness Agent on the conditioning work needed.
 
 ## Built with
 Fetch.ai uAgents · Agentverse · ASI:One · Anthropic Claude

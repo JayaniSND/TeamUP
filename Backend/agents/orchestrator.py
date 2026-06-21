@@ -129,6 +129,40 @@ async def _inline_specialist(name: str, user_id: str, note: str) -> str:
             "draft_email": v.get("draft_email", ""), "status": "drafted",
         })
         return f"🤝 Sponsor: {v.get('brand_name')} (fit {v.get('fit_score', 0):.2f}) — draft ready for review (not sent)."
+    if name == "fitness":
+        v = await claude.suggest_fitness_plan(
+            note,
+            await backend.recent_training(user_id),
+            await backend.recent_recovery_logs(user_id),
+            await backend.recent_entries(user_id, limit=60),
+        )
+        await backend.create_agent_output(
+            user_id, "Fitness Agent", "fitness",
+            v.get("summary", ""), "info", v.get("recommended_action", ""),
+        )
+        days = v.get("adjusted_plan") or []
+        plan_preview = "; ".join(
+            f"{d['day']}: {d['session_type']} ({d['intensity']})" for d in days[:3]
+        )
+        return (
+            f"🏋️ Fitness ({v.get('trigger')}): {v.get('summary', '')} "
+            f"👉 {plan_preview or v.get('recommended_action', '')}"
+        )
+    if name == "coaching":
+        v = await claude.coach_strategy(
+            "performance_gap",
+            note,
+            await backend.recent_entries(user_id, "coaching"),
+            await backend.recent_match_results(user_id),
+        )
+        await backend.create_agent_output(
+            user_id, "Coaching Agent", "coaching",
+            v.get("summary", ""), "info", v.get("recommended_action", ""),
+        )
+        return (
+            f"🎯 Coaching ({v.get('trigger')}): {v.get('summary', '')} "
+            f"👉 {v.get('tactical_advice', '')}"
+        )
     return ""
 
 
@@ -181,7 +215,7 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
 
 
 def _specialist_addresses() -> set[str]:
-    names = ("librarian", "recovery", "performance", "sponsorship", "logistics", "scout")
+    names = ("librarian", "recovery", "performance", "sponsorship", "logistics", "scout", "fitness", "coaching")
     addrs = {config.address_for(n) for n in names} | {config.LIBRARIAN_ADDRESS}
     return {a for a in addrs if a}
 

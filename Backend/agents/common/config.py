@@ -48,6 +48,8 @@ PERFORMANCE_ADDRESS: str = _env_addr("PERFORMANCE_ADDRESS")
 SPONSORSHIP_ADDRESS: str = _env_addr("SPONSORSHIP_ADDRESS")
 LOGISTICS_ADDRESS: str = _env_addr("LOGISTICS_ADDRESS")
 SCOUT_ADDRESS: str = _env_addr("SCOUT_ADDRESS")
+FITNESS_ADDRESS: str = _env_addr("FITNESS_ADDRESS")
+COACHING_ADDRESS: str = _env_addr("COACHING_ADDRESS")
 
 
 def address_for(agent_name: str) -> str:
@@ -64,23 +66,25 @@ def address_for(agent_name: str) -> str:
         "sponsorship": cfg.SPONSORSHIP_ADDRESS,
         "logistics": cfg.LOGISTICS_ADDRESS,
         "scout": cfg.SCOUT_ADDRESS,
+        "fitness": cfg.FITNESS_ADDRESS,
+        "coaching": cfg.COACHING_ADDRESS,
     }.get(agent_name, "")
 
 
 # Which specialist agents should react when a section appears in a dump.
 # The Orchestrator triggers the union of these for the classified sections.
 SECTION_AGENTS: dict[str, list[str]] = {
-    "recovery": ["recovery"],
-    "training": ["recovery", "performance"],
+    "recovery": ["recovery", "fitness"],
+    "training": ["recovery", "performance", "fitness"],
     "match_results": ["performance", "sponsorship", "scout"],
     "performance": ["performance"],
+    "coaching": ["coaching"],
     # Logistics is an interactive agent (flights/hotels/tournament pick), not a
     # one-shot fan-in worker — it's invoked on an explicit request, not every dump.
     "logistics": [],
     "sponsorship": ["sponsorship"],
     "media_notes": ["sponsorship"],
     "goals": [],
-    "coaching": [],
 }
 
 # ── Models ─────────────────────────────────────────────────────────
@@ -97,6 +101,8 @@ PERFORMANCE_SEED = os.environ.get("PERFORMANCE_SEED", "baseline-performance-seed
 SPONSORSHIP_SEED = os.environ.get("SPONSORSHIP_SEED", "baseline-sponsorship-seed-v1")
 LOGISTICS_SEED = os.environ.get("LOGISTICS_SEED", "baseline-logistics-seed-v1")
 SCOUT_SEED = os.environ.get("SCOUT_SEED", "baseline-scout-seed-v1")
+FITNESS_SEED = os.environ.get("FITNESS_SEED", "baseline-fitness-seed-v1")
+COACHING_SEED = os.environ.get("COACHING_SEED", "baseline-coaching-seed-v1")
 ORCHESTRATOR_SEED = os.environ.get("ORCHESTRATOR_SEED", "baseline-orchestrator-seed-v1")
 
 LIBRARIAN_PORT = int(os.environ.get("LIBRARIAN_PORT", "8001"))
@@ -106,6 +112,8 @@ PERFORMANCE_PORT = int(os.environ.get("PERFORMANCE_PORT", "8004"))
 SPONSORSHIP_PORT = int(os.environ.get("SPONSORSHIP_PORT", "8005"))
 LOGISTICS_PORT = int(os.environ.get("LOGISTICS_PORT", "8006"))
 SCOUT_PORT = int(os.environ.get("SCOUT_PORT", "8007"))
+FITNESS_PORT = int(os.environ.get("FITNESS_PORT", "8008"))
+COACHING_PORT = int(os.environ.get("COACHING_PORT", "8009"))
 
 # ── Browserbase (tournament / opponent scraping) ───────────────────
 BROWSERBASE_API_KEY: str = os.environ.get("BROWSERBASE_API_KEY", "").strip()

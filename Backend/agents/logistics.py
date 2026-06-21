@@ -1,5 +1,6 @@
 """logistics.py — Logistics specialist agent: flights, hotels, ITF
-tournament search, and the athlete's Google Calendar — all in one agent.
+tournament search, a Stripe test-mode payment gate, and the athlete's
+Google Calendar — all in one agent.
 
 Receives logistics-related text — forwarded by the Librarian when an entry
 is classified into the `logistics` section, or asked directly by a human
@@ -8,46 +9,52 @@ through ASI:One/Agentverse — extracts a travel intent with Claude, then:
   1. Queries the Flights agent and the Duffel Stays hotel agent (external,
      real Agentverse agents) for real options.
   2. Searches the ITF Women's World Tennis Tour calendar (via Browserbase/
-     Stagehand) for W15/W25 tournaments — the entry-level pro circuit that
-     fits an elite junior transitioning into low-level pro events.
+     Stagehand) for W15/W25 tournaments.
   3. Creates an event on the athlete's Google Calendar for the trip dates.
   4. Replies with everything gathered. If tournaments were found, a
-     follow-up reply with a number walks toward that tournament's entry
-     page — see SAFETY DESIGN below for where that deliberately stops.
+     follow-up reply with a number triggers a REAL Stripe test-mode
+     payment (a small "booking assistance" fee) before continuing to the
+     tournament's entry review screen — see PAYMENT DESIGN below.
 
-REAL-WORLD CONSTRAINT: ITF entry isn't a public "search and pay" flow.
-It goes through the player's own IPIN account (https://ipin.itftennis.com/),
-tied to their real ranking, with a fixed entry deadline — 18 days before
-the Monday of the tournament week. IPIN is a per-player account, not a
-family/guardian account, so this agent talks about "your IPIN account,"
-not a guardian's — but note: if the player entering is a minor, ITF's own
-Age Eligibility Rules (AER) and any account safeguarding requirements
-still apply regardless of what this agent does or doesn't say; nothing
-here changes or bypasses those.
+PAYMENT DESIGN — read before changing this:
+  This uses Stripe's TEST mode (sk_test_... key, test card numbers like
+  4242 4242 4242 4242). It is a real Checkout Session and a real
+  confirmed-paid check via Stripe's API — not a hardcoded "success"
+  message. If you swap in a live secret key this becomes real money;
+  don't do that without understanding what you're charging for.
+  This fee is YOUR agent's own service fee, not a payment for an actual
+  flight/hotel/tournament entry — the Flights/Hotels agents have their
+  own separate payment system (FET/Skyfire) you don't control, and the
+  ITF entry itself is still never auto-submitted (see SAFETY DESIGN
+  below) — Stripe here only gates whether this agent continues to show
+  you that entry review screen, nothing more.
 
 SAFETY DESIGN — read before changing this file:
   This agent will, if IPIN_USERNAME/IPIN_PASSWORD are set, log in and fill
   the entry form for a chosen tournament. It deliberately does NOT contain
-  any code path that clicks the final "submit / pay" action — not even
-  behind a chat "CONFIRM" reply. A chat message is too low a bar to gate a
-  real, irreversible, real-money transaction behind, especially on a flow
-  that's never been run against the live site. The last step — reviewing
-  the filled form and the actual charge, then submitting — is left to the
-  actual account holder, in the real browser, on purpose.
+  any code path that clicks the final "submit / pay" action on the ITF
+  site — not even after the Stripe fee above is paid. Paying this agent's
+  service fee is not the same thing as authorizing a real federation
+  entry; those stay two separate, separately-gated actions on purpose.
 
-⚠️ ACTION NEEDED FROM YOU for the calendar piece — see calendar_client.py's
-docstring for the full one-time Google OAuth setup. Without it, the
-calendar step just degrades gracefully (skipped, noted in the reply).
+REAL-WORLD CONSTRAINT: ITF entry isn't a public "search and pay" flow.
+It goes through the player's own IPIN account (https://ipin.itftennis.com/),
+tied to their real ranking, with a fixed entry deadline — 18 days before
+the Monday of the tournament week.
+
+⚠️ ACTION NEEDED FROM YOU:
+  - Stripe: dashboard.stripe.com → Developers → API keys → toggle "Test
+    mode" → copy the Secret key (starts sk_test_). Set STRIPE_SECRET_KEY.
+    `pip install stripe`. Without this key set, the payment gate is
+    skipped entirely and the old direct-to-walkthrough behavior runs.
+  - Google Calendar: see calendar_client.py's docstring for the one-time
+    OAuth setup. Without it, the calendar step degrades gracefully.
 
 ⚠️ Per .env.example, LOGISTICS_ADDRESS is "owned by Dev 4." Coordinate
 before this becomes the canonical logistics agent in your submission.
 
 Run:  python -m agents.logistics   (from the Backend/ directory)
 On boot it prints its address — paste that into .env as LOGISTICS_ADDRESS.
-
-Required env vars: ANTHROPIC_API_KEY, BROWSERBASE_API_KEY,
-BROWSERBASE_PROJECT_ID. Optional: IPIN_USERNAME/IPIN_PASSWORD,
-FLIGHTS_AGENT_ADDRESS/HOTELS_AGENT_ADDRESS overrides.
 """
 
 from __future__ import annotations
@@ -60,6 +67,7 @@ import re
 from datetime import date, datetime, timezone
 
 import anthropic
+import stripe
 from pydantic import BaseModel
 from stagehand import Stagehand
 from uagents import Agent, Context, Protocol
@@ -87,15 +95,23 @@ HOTELS_AGENT_ADDRESS = os.environ.get(
 # ── ITF tournament search (Browserbase / Stagehand) ────────────────────
 CALENDAR_URL = "https://www.itftennis.com/en/tournament-calendar/womens-world-tennis-tour-calendar/"
 TOUR_NAME = "Women's World Tennis Tour"
-TIER = "W15/W25"  # entry-level pro circuit — the realistic level for an elite junior turning pro
+TIER = "W15/W25"
 
 BROWSERBASE_API_KEY = os.environ.get("BROWSERBASE_API_KEY", "")
 BROWSERBASE_PROJECT_ID = os.environ.get("BROWSERBASE_PROJECT_ID", "")
 IPIN_USERNAME = os.environ.get("IPIN_USERNAME", "").strip()
 IPIN_PASSWORD = os.environ.get("IPIN_PASSWORD", "").strip()
 
-REPLY_TIMEOUT_SECONDS = 30  # for the flights/hotels/tournament-search legs
-PICK_TIMEOUT_SECONDS = 600  # for waiting on a human to pick a tournament number
+# ── Stripe (TEST MODE) ───────────────────────────────────────────────
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "").strip()
+STRIPE_SUCCESS_URL = os.environ.get("STRIPE_SUCCESS_URL", "https://example.com/success")
+STRIPE_CANCEL_URL = os.environ.get("STRIPE_CANCEL_URL", "https://example.com/cancel")
+BOOKING_FEE_USD = float(os.environ.get("BOOKING_FEE_USD", "5.00"))
+stripe.api_key = STRIPE_SECRET_KEY or None
+
+REPLY_TIMEOUT_SECONDS = 30      # flights/hotels/tournament-search legs
+PICK_TIMEOUT_SECONDS = 600      # waiting on a human to pick a tournament number
+PAYMENT_TIMEOUT_SECONDS = 900   # waiting on Stripe checkout to complete
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -113,7 +129,7 @@ anthropic_client = anthropic.Anthropic(api_key=config.require_anthropic_key())
 class TournamentListing(BaseModel):
     name: str
     location: str
-    category: str = ""  # e.g. "W15", "W25"
+    category: str = ""
     start_date: str = ""
     end_date: str = ""
     entry_deadline: str = ""
@@ -124,9 +140,9 @@ class TournamentSearchResult(BaseModel):
     tournaments: list[TournamentListing]
 
 
-# Single in-flight conversation, demo scale. Stages: "active" (waiting on
-# flights/hotels/tournament legs) -> "awaiting_pick" (tournaments found,
-# waiting for a number) -> cleared.
+# Single in-flight conversation, demo scale. Stages: "active" -> (tournaments
+# found) "awaiting_pick" -> (number picked, Stripe configured) "awaiting_payment"
+# -> entry walkthrough -> cleared.
 current: dict | None = None
 
 
@@ -180,6 +196,33 @@ def _maybe_create_calendar_event(intent: dict, raw_text: str) -> str | None:
     )
 
 
+# ── Stripe (TEST MODE) ───────────────────────────────────────────────────
+
+def _create_checkout_session(tournament_name: str) -> tuple[str, str]:
+    """Real Stripe test-mode Checkout Session. Returns (checkout_url, session_id)."""
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        payment_method_types=["card"],
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "product_data": {"name": f"Booking assistance fee — {tournament_name}"},
+                "unit_amount": int(round(BOOKING_FEE_USD * 100)),
+            },
+            "quantity": 1,
+        }],
+        success_url=STRIPE_SUCCESS_URL,
+        cancel_url=STRIPE_CANCEL_URL,
+    )
+    return session.url, session.id
+
+
+def _check_payment_status(session_id: str) -> bool:
+    """Real check against Stripe's API — true only if actually paid."""
+    session = stripe.checkout.Session.retrieve(session_id)
+    return session.payment_status == "paid"
+
+
 # ── ITF tournament search (Browserbase / Stagehand) ─────────────────────
 
 def _stagehand_kwargs() -> dict:
@@ -195,22 +238,15 @@ def _stagehand_kwargs() -> dict:
 
 
 async def _search_tournaments(location_hint: str | None) -> list[TournamentListing]:
-    """Open a fresh Browserbase session, navigate the ITF calendar, and
-    extract W15/W25 tournaments. Closes the session before returning."""
     stagehand = Stagehand(**_stagehand_kwargs())
     await stagehand.init()
     log.info("Stagehand session: %s", stagehand.session_id)
     try:
         page = stagehand.page
         await page.goto(CALENDAR_URL)
-
-        # TODO: verify this instruction actually surfaces a level filter on
-        # the live site — refine wording after watching the session replay.
         await page.act(f"filter the tournament list to only {TIER} category events")
-
         if location_hint:
             await page.act(f"if there is a location or country filter, set it to {location_hint}")
-
         result = await page.extract(
             instruction=(
                 f"Extract every {TIER} tournament currently shown, including "
@@ -227,9 +263,8 @@ async def _search_tournaments(location_hint: str | None) -> list[TournamentListi
 
 
 async def _prepare_entry(tournament: TournamentListing) -> str:
-    """Walk toward entering a specific tournament. Logs in only if IPIN
-    credentials are configured. Stops at the final review/payment screen —
-    see SAFETY DESIGN at the top of this file. Never submits anything."""
+    """Walk toward entering a specific tournament. Never submits — see
+    SAFETY DESIGN at the top of this file."""
     if not tournament.entry_url:
         return (
             f"I don't have a direct entry link for {tournament.name} from the "
@@ -253,17 +288,13 @@ async def _prepare_entry(tournament: TournamentListing) -> str:
     try:
         page = stagehand.page
         await page.goto(tournament.entry_url)
-
-        # TODO: untested against the live IPIN login/entry screen.
         await page.act("click the Enter button for this tournament")
         login_present = await page.observe("find the IPIN username and password login fields")
         if login_present:
             await page.act(f"enter the username {IPIN_USERNAME} in the IPIN login username field")
             await page.act(f"enter the password {IPIN_PASSWORD} in the IPIN login password field")
             await page.act("submit the login form")
-
         await page.act("proceed to the entry confirmation and payment review screen, but do not submit or pay")
-
         summary = await page.extract(
             instruction=(
                 "Describe exactly what this entry/payment review screen shows: "
@@ -274,7 +305,6 @@ async def _prepare_entry(tournament: TournamentListing) -> str:
             schema={"type": "object", "properties": {"summary": {"type": "string"}}},
         )
         review_text = summary.get("summary", "(could not read the review screen)")
-
         return (
             f"I've gotten as far as the entry review screen for {tournament.name} "
             f"— here's exactly what it shows:\n\n{review_text}\n\n"
@@ -288,12 +318,9 @@ async def _prepare_entry(tournament: TournamentListing) -> str:
 
 
 async def _run_tournament_leg(ctx: Context, req: dict, location_hint: str | None):
-    """Runs as a background task so it doesn't block flights/hotels from
-    proceeding in parallel. Mutates req in place (same dict object the
-    global `current` points to) and checks for completion when done."""
     try:
         req["tournaments"] = await _search_tournaments(location_hint)
-    except Exception as e:  # noqa: BLE001 — degrade this leg, don't crash the agent
+    except Exception as e:  # noqa: BLE001
         log.warning("Tournament search failed: %s", e)
         req["tournaments"] = []
         req["tournament_error"] = str(e)
@@ -368,13 +395,10 @@ async def _kick_off_request(ctx: Context, sender: str, user_id: str, raw_text: s
 
 def _compose_summary(req: dict) -> str:
     lines = [f"🧳 Logistics for {req['destination']} ({req['start_date']} → {req['end_date']}):"]
-
     lines.append("\n✈️ Flights:")
     lines.append(req["flights_reply"] or "  (no response from the flights agent yet)")
-
     lines.append("\n🏨 Hotels:")
     lines.append(req["hotels_reply"] or "  (no response from the hotels agent yet)")
-
     lines.append(f"\n🎾 {TIER} tournaments ({TOUR_NAME}):")
     tournaments = req.get("tournaments") or []
     if tournaments:
@@ -389,13 +413,11 @@ def _compose_summary(req: dict) -> str:
         lines.append(f"  (tournament search failed: {req['tournament_error']})")
     else:
         lines.append("  No matching tournaments found right now.")
-
     lines.append("\n📅 Calendar:")
     if req["calendar_link"]:
         lines.append(f"  Added to your calendar: {req['calendar_link']}")
     else:
         lines.append("  Couldn't add this to your calendar (dates unclear, or calendar isn't authorized yet).")
-
     lines.append(
         "\nThese are options only — nothing has been booked, entered, or "
         "paid for. Tell me what you'd like and we can take the next step."
@@ -404,8 +426,6 @@ def _compose_summary(req: dict) -> str:
 
 
 async def _finish_active_stage(ctx: Context, req: dict):
-    """Send the combined summary. If tournaments were found, stay open for
-    a follow-up pick; otherwise close out the conversation."""
     global current
     has_tournaments = bool(req.get("tournaments"))
     await ctx.send(req["reply_to"], make_chat(_compose_summary(req), end_session=not has_tournaments))
@@ -424,12 +444,51 @@ async def _maybe_finish(ctx: Context):
     await _finish_active_stage(ctx, req)
 
 
+async def _start_payment_or_skip(ctx: Context, sender: str, chosen: TournamentListing):
+    """If Stripe is configured, charge the demo service fee and wait for
+    real confirmation before continuing. If not configured, fall back to
+    the old behavior — go straight to the entry walkthrough."""
+    global current
+
+    if not STRIPE_SECRET_KEY:
+        summary = await _prepare_entry(chosen)
+        await ctx.send(sender, make_chat(summary, end_session=True))
+        current = None
+        return
+
+    try:
+        checkout_url, session_id = await asyncio.to_thread(_create_checkout_session, chosen.name)
+    except Exception as e:  # noqa: BLE001 — don't crash the agent on a Stripe error
+        log.warning("Stripe checkout creation failed: %s", e)
+        await ctx.send(
+            sender,
+            make_chat(f"Couldn't start the payment step ({e}) — try again shortly.", end_session=True),
+        )
+        current = None
+        return
+
+    current["stage"] = "awaiting_payment"
+    current["chosen_tournament"] = chosen
+    current["stripe_session_id"] = session_id
+    current["started_at"] = datetime.now(timezone.utc)
+
+    await ctx.send(
+        sender,
+        make_chat(
+            f"To pull up entry details for {chosen.name}, there's a "
+            f"${BOOKING_FEE_USD:.2f} booking assistance fee (Stripe TEST mode "
+            f"— use card 4242 4242 4242 4242, any future date/CVC, no real "
+            f"charge). Pay here: {checkout_url}\n"
+            f"I'll continue automatically once payment is confirmed."
+        ),
+    )
+
+
 @chat_proto.on_message(ChatMessage)
 async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     global current
     await ctx.send(sender, make_ack(msg))
 
-    # Replies from the external Flights/Hotels agents.
     if current is not None and current["stage"] == "active" and sender in (FLIGHTS_AGENT_ADDRESS, HOTELS_AGENT_ADDRESS):
         body = text_of(msg)
         if sender == FLIGHTS_AGENT_ADDRESS:
@@ -456,7 +515,6 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     if not raw.strip():
         return
 
-    # Follow-up: picking a tournament number after a completed search.
     if current is not None and current["stage"] == "awaiting_pick" and sender == current["reply_to"]:
         choice = raw.strip()
         if choice.isdigit():
@@ -464,13 +522,9 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
             tournaments = current["tournaments"]
             if 0 <= idx < len(tournaments):
                 chosen = tournaments[idx]
-                ctx.logger.info("Preparing entry info for %s", chosen.name)
-                summary = await _prepare_entry(chosen)
-                await ctx.send(sender, make_chat(summary, end_session=True))
-                current = None
+                ctx.logger.info("Tournament picked: %s", chosen.name)
+                await _start_payment_or_skip(ctx, sender, chosen)
                 return
-        # Not a valid pick — don't get the conversation stuck, fall through
-        # and treat this as a fresh request instead.
         current = None
 
     if current is not None:
@@ -495,11 +549,32 @@ async def flush_stale(ctx: Context):
     if current is None:
         return
     age = (datetime.now(timezone.utc) - current["started_at"]).total_seconds()
+
     if current["stage"] == "active" and age > REPLY_TIMEOUT_SECONDS:
         await _finish_active_stage(ctx, current)
+
     elif current["stage"] == "awaiting_pick" and age > PICK_TIMEOUT_SECONDS:
         ctx.logger.info("Clearing stale tournament pick window (no reply for %.0fs)", age)
         current = None
+
+    elif current["stage"] == "awaiting_payment":
+        req = current
+        paid = await asyncio.to_thread(_check_payment_status, req["stripe_session_id"])
+        if paid:
+            ctx.logger.info("Stripe payment confirmed for session %s", req["stripe_session_id"])
+            chosen = req["chosen_tournament"]
+            reply_to = req["reply_to"]
+            current = None
+            await ctx.send(reply_to, make_chat("✅ Payment confirmed — pulling up entry details now..."))
+            summary = await _prepare_entry(chosen)
+            await ctx.send(reply_to, make_chat(summary, end_session=True))
+        elif age > PAYMENT_TIMEOUT_SECONDS:
+            ctx.logger.info("Payment window expired for session %s", req["stripe_session_id"])
+            await ctx.send(
+                req["reply_to"],
+                make_chat("Payment window expired — ask me again if you'd still like to proceed.", end_session=True),
+            )
+            current = None
 
 
 agent.include(chat_proto, publish_manifest=True)

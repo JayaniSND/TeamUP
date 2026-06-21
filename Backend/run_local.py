@@ -27,7 +27,7 @@ from uagents_core.contrib.protocols.chat import (
 )
 
 from agents import (
-    librarian, orchestrator, performance, recovery, scout, sponsorship,
+    coaching, fitness, librarian, orchestrator, performance, recovery, scout, sponsorship,
 )
 from agents.common import config
 from agents.common.chat import make_ack, make_chat, text_of
@@ -38,6 +38,8 @@ config.RECOVERY_ADDRESS = recovery.agent.address
 config.PERFORMANCE_ADDRESS = performance.agent.address
 config.SPONSORSHIP_ADDRESS = sponsorship.agent.address
 config.SCOUT_ADDRESS = scout.agent.address
+config.FITNESS_ADDRESS = fitness.agent.address
+config.COACHING_ADDRESS = coaching.agent.address
 
 # Logistics is the teammate's interactive agent and pulls heavier deps
 # (stagehand, google libs). Import it best-effort so the offline loop still
@@ -100,6 +102,8 @@ if __name__ == "__main__":
     bureau.add(performance.agent)
     bureau.add(sponsorship.agent)
     bureau.add(scout.agent)
+    bureau.add(fitness.agent)
+    bureau.add(coaching.agent)
     if logistics is not None:
         bureau.add(logistics.agent)
     bureau.add(user)
