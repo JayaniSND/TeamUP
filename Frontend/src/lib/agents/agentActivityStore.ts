@@ -192,6 +192,53 @@ const statusFrom = (value?: string): AgentActivityStatus =>
 
 const connectionKey = (from: AgentId, to: AgentId) => [from, to].sort().join("<->");
 
+function keepLiveEdge(
+  agents: AgentId[],
+  nodeStatus: Partial<Record<AgentId, AgentActivityStatus>>,
+  connections: AgentConnection[],
+  activeAgent: AgentId | null
+): { nodeStatus: Partial<Record<AgentId, AgentActivityStatus>>; connections: AgentConnection[]; activeAgent: AgentId | null } {
+  if (connections.some((conn) => conn.status === "in_progress")) {
+    return { nodeStatus, connections, activeAgent };
+  }
+
+  const peer =
+    (activeAgent && activeAgent !== "orchestrator" ? activeAgent : null) ??
+    agents.find((id) => id !== "orchestrator" && nodeStatus[id] === "planned") ??
+    [...connections]
+      .reverse()
+      .map((conn) => (conn.from === "orchestrator" ? conn.to : conn.from))
+      .find((id) => id !== "orchestrator") ??
+    agents.find((id) => id !== "orchestrator") ??
+    null;
+
+  if (!peer) return { nodeStatus, connections, activeAgent };
+
+  const nextNodeStatus = {
+    ...nodeStatus,
+    orchestrator: "in_progress" as AgentActivityStatus,
+    [peer]: "in_progress" as AgentActivityStatus,
+  } satisfies Partial<Record<AgentId, AgentActivityStatus>>;
+  const nextConnections = [...connections];
+  const idx = nextConnections.findIndex(
+    (conn) =>
+      (conn.from === "orchestrator" && conn.to === peer) ||
+      (conn.from === peer && conn.to === "orchestrator")
+  );
+
+  if (idx >= 0) {
+    nextConnections[idx] = { ...nextConnections[idx], status: "in_progress" };
+  } else {
+    nextConnections.push({ from: "orchestrator", to: peer, status: "in_progress" });
+  }
+
+  return {
+    nodeStatus: nextNodeStatus,
+    connections: nextConnections,
+    activeAgent: activeAgent && activeAgent !== "orchestrator" ? activeAgent : peer,
+  };
+}
+
 export function applyAgentTraceEvent(entry: AgentTraceEntry): void {
   const status = statusFrom(entry.status);
   let from = resolveAgentId(entry.from) ?? resolveAgentId(entry.fromAgent);
@@ -276,6 +323,12 @@ export function applyAgentTraceEvent(entry: AgentTraceEntry): void {
       outConnections = outConnections
         .filter((c) => outAgents.includes(c.from) && outAgents.includes(c.to) && c.status !== "planned")
         .map((c) => (c.status === "error" ? c : { ...c, status: "completed" }));
+    }
+    if (!completed && !errored && nextStatus === "in_progress") {
+      const live = keepLiveEdge(outAgents, outNodeStatus, outConnections, activeAgent);
+      outNodeStatus = live.nodeStatus;
+      outConnections = live.connections;
+      activeAgent = live.activeAgent;
     }
     const flow = flowLabelFor(outAgents) ?? prev.currentFlow;
 
