@@ -379,6 +379,24 @@ def create_sponsorship(s: SponsorshipIn):
     return {"opportunity_id": row["opportunity_id"]}
 
 
+class CalendarIn(BaseModel):
+    user_id: str
+    title: str
+    event_type: str = "tournament"
+    start_time: str = ""
+    end_time: str = ""
+    location: str = ""
+    source: str = "agent"
+    metadata: dict = {}
+
+
+@app.post("/calendar/add")
+def add_calendar_event(c: CalendarIn):
+    row = {"event_id": next(_ids), "ts": datetime.now(timezone.utc).isoformat(), **c.model_dump()}
+    DB["calendar_events"].append(row)
+    return {"event_id": row["event_id"]}
+
+
 # ── dashboard endpoints ────────────────────────────────────────────
 @app.get("/dashboard/overview")
 def dashboard_overview(user_id: str):

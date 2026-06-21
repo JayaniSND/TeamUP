@@ -24,7 +24,9 @@ from uagents_core.contrib.protocols.chat import (
     chat_protocol_spec,
 )
 
-from agents import librarian, orchestrator, performance, recovery, sponsorship
+from agents import (
+    librarian, logistics, orchestrator, performance, recovery, scout, sponsorship,
+)
 from agents.common import config
 from agents.common.chat import make_ack, make_chat, text_of
 
@@ -33,6 +35,8 @@ config.LIBRARIAN_ADDRESS = librarian.agent.address
 config.RECOVERY_ADDRESS = recovery.agent.address
 config.PERFORMANCE_ADDRESS = performance.agent.address
 config.SPONSORSHIP_ADDRESS = sponsorship.agent.address
+config.LOGISTICS_ADDRESS = logistics.agent.address
+config.SCOUT_ADDRESS = scout.agent.address
 
 DUMP = (
     "Worked on my serve today, felt sharp and the toss was consistent. "
@@ -73,11 +77,15 @@ if __name__ == "__main__":
     print("Recovery:    ", recovery.agent.address)
     print("Performance: ", performance.agent.address)
     print("Sponsorship: ", sponsorship.agent.address)
+    print("Logistics:   ", logistics.agent.address)
+    print("Scout:       ", scout.agent.address)
     bureau = Bureau(port=int(os.environ.get("BUREAU_PORT", "8000")))
     bureau.add(orchestrator.agent)
     bureau.add(librarian.agent)
     bureau.add(recovery.agent)
     bureau.add(performance.agent)
     bureau.add(sponsorship.agent)
+    bureau.add(logistics.agent)
+    bureau.add(scout.agent)
     bureau.add(user)
     bureau.run()
