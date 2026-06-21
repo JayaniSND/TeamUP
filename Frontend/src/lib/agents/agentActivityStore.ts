@@ -126,6 +126,29 @@ export function resetAgentActivity(): void {
   emit();
 }
 
+/**
+ * Optimistically light the Orchestrator node the instant a message is sent, so
+ * the graph reacts immediately — before the first live SSE event arrives. The
+ * live stream then fills in the specialists as the backend actually calls them.
+ * Seeds ONLY the orchestrator (a single node is not treated as "already
+ * streamed"), so a failed stream still falls back to the real backend trace.
+ */
+export function seedFlow(flowId: string, messageId: string): void {
+  state = {
+    ...initialState,
+    currentFlowId: flowId,
+    currentMessageId: messageId,
+    status: "in_progress",
+    activeStep: "Routing your request",
+    activeAgent: "orchestrator",
+    agents: ["orchestrator"],
+    nodeStatus: { orchestrator: "in_progress" },
+    source: "trace",
+    lastUpdated: Date.now(),
+  };
+  emit();
+}
+
 const statusFrom = (value?: string): AgentActivityStatus =>
   value === "completed" ? "completed" : value === "error" ? "error" : "in_progress";
 
@@ -170,13 +193,25 @@ export function applyAgentTraceEvent(entry: AgentTraceEntry): void {
     const nextStatus: AgentActivityStatus = errored ? "error" : completed ? "completed" : "in_progress";
     const flow = flowLabelFor(agents) ?? prev.currentFlow;
 
+    // When the flow finishes, settle every participating node + line to completed
+    // (green), preserving any error state. Without this, a fan-out parent left
+    // mid-chain (e.g. Recovery after firing Fitness + Coaching) could linger
+    // "in_progress" even though the whole workflow is done.
+    let outNodeStatus = nodeStatus;
+    let outConnections = [...connectionMap.values()];
+    if (completed) {
+      outNodeStatus = {};
+      for (const id of agents) outNodeStatus[id] = nodeStatus[id] === "error" ? "error" : "completed";
+      outConnections = outConnections.map((c) => (c.status === "error" ? c : { ...c, status: "completed" }));
+    }
+
     return {
       currentFlowId: entry.flowId ?? prev.currentFlowId,
       currentMessageId: entry.messageId ?? prev.currentMessageId,
       latestEvent: entry.type ?? prev.latestEvent,
       agents,
-      nodeStatus,
-      connections: [...connectionMap.values()],
+      nodeStatus: outNodeStatus,
+      connections: outConnections,
       activeAgent: completed ? null : activeAgent,
       activeStep: entry.step || prev.activeStep,
       status: nextStatus,

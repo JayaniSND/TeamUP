@@ -12,9 +12,6 @@ import {
   type AgentConnection,
   type AgentId,
 } from "@/lib/agents/agentActivityStore";
-import { flowLabelFor } from "@/lib/agents/backendAgentRegistry";
-import { parseTraceToFrames, type TraceFrame } from "@/lib/agents/agentTraceParser";
-import { inferTrace } from "@/lib/agents/agentFlowMapper";
 import type { ChatMessage } from "@/types/athlete";
 import { AgentActivityStatus } from "./AgentActivityStatus";
 import { AgentNetwork } from "./AgentNetwork";
@@ -25,12 +22,6 @@ import { AgentCanvasBoundary, supportsWebGL } from "./AgentCanvasBoundary";
 const AgentNetwork3D = lazy(() => import("./AgentNetwork3D"));
 
 type NodeStatus = AgentActivityState["status"];
-
-const STEP_MS = 650;
-
-const prefersReducedMotion = () =>
-  typeof window !== "undefined" &&
-  !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 const dedupe = (ids: AgentId[]): AgentId[] => Array.from(new Set(ids));
 const connKey = (from: AgentId, to: AgentId) => `${from}->${to}`;
@@ -68,28 +59,17 @@ function extendState(prev: AgentActivityState, opts: ExtendOpts): Partial<AgentA
   };
 }
 
-function applyFrame(frame: TraceFrame, source: AgentActivityState["source"], flow: string | null) {
-  setAgentActivity({
-    agents: frame.agents,
-    nodeStatus: frame.nodeStatus,
-    connections: frame.connections,
-    activeAgent: frame.activeAgent,
-    activeStep: frame.activeStep,
-    status: frame.status,
-    currentFlowId: frame.currentFlowId,
-    currentMessageId: frame.currentMessageId,
-    latestEvent: frame.latestEvent,
-    currentFlow: flow,
-    source,
-  });
-}
-
 /**
- * Live activity driver. Replays the orchestrator's REAL `agent_trace` into the
- * shared store so the network shows only the agents that ran. Falls back to a
- * small inferred trace when a reply carries none, and appends the booking
- * payment/calendar stages ONLY from real Stripe/calendar events. Never touches
- * the chat engine — it observes the already-shared chat + calendar state.
+ * Live activity driver. The Live Agent graph is driven IN REAL TIME by the SSE
+ * stream (see ChatSessionContext.openAgentActivityStream → applyAgentTraceEvent),
+ * which lights each agent and edge the instant the backend calls it. This hook
+ * only handles the lifecycle AROUND that live stream:
+ *   • when a reply lands, finalize the live formation and fade back to idle;
+ *   • if the stream never delivered (EventSource unsupported/blocked), apply the
+ *     REAL backend trace once — instantly, never a paced "replay after the
+ *     response" and never a keyword-guessed fake;
+ *   • append the booking payment/calendar stages ONLY from real Stripe/calendar
+ *     events. It never touches the chat engine — it observes shared state.
  */
 function useLiveAgentActivity() {
   const { messages, loading } = useChatSessionState();
@@ -111,21 +91,24 @@ function useLiveAgentActivity() {
   };
 
   // ── chat: send + reply ────────────────────────────────────────────────────
+  // The graph animates LIVE during the request via the SSE stream; this effect
+  // only finalizes when the reply lands. It never paces a post-response replay.
   useEffect(() => {
     const wasLoading = prevLoadingRef.current;
     prevLoadingRef.current = loading;
     const msgs = messagesRef.current;
 
     if (!wasLoading && loading) {
+      // New send — the live stream (seeded orchestrator + SSE events) drives the
+      // store now. Just cancel any pending fade-to-idle from the previous reply.
       clearTimers();
       return;
     }
 
-    // REPLY landed → replay the real trace (or an inferred one).
+    // REPLY landed → finalize the live formation (do NOT replay it).
     if (wasLoading && !loading) {
       clearTimers();
       const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
-      const lastUser = [...msgs].reverse().find((m) => m.role === "user");
 
       if (lastAssistant?.isError) {
         setAgentActivity((prev) => ({
@@ -137,12 +120,13 @@ function useLiveAgentActivity() {
         return;
       }
 
-      const reduced = prefersReducedMotion();
-      const hasTrace = !!lastAssistant?.trace?.length;
-      const frames = hasTrace
-        ? parseTraceToFrames(lastAssistant!.trace)
-        : parseTraceToFrames(inferTrace(lastUser?.text ?? "", lastAssistant?.agents));
-      if (!frames.length) return;
+      const snap = getAgentActivitySnapshot();
+      // The live SSE stream delivered if the store is on this reply's flow AND a
+      // real specialist (beyond the optimistic Orchestrator seed) showed up.
+      const liveStreamed =
+        !!lastAssistant?.flowId &&
+        snap.currentFlowId === lastAssistant.flowId &&
+        snap.agents.some((a) => a !== "orchestrator");
 
       const source: AgentActivityState["source"] = hasTrace ? "trace" : "inferred";
       const finalAgents = frames[frames.length - 1].agents;
@@ -172,11 +156,11 @@ function useLiveAgentActivity() {
 
     const newConfirmation = !!confirmation && confirmation !== prevConfirmation;
 
-    // Payment succeeded → calendar updates → done.
+    // Payment succeeded → calendar updates → done. Driven by the REAL backend
+    // checkout/confirmation trace (payment → calendar), applied as it stands.
     if (newConfirmation) {
       clearTimers();
-      const tracedFrames = parseTraceToFrames(confirmation.trace);
-      if (tracedFrames.length) {
+      if (confirmation.trace?.length) {
         applyAgentTraceEvents(confirmation.trace);
         return;
       }
