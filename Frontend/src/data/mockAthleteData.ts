@@ -190,6 +190,64 @@ export const athleteData: AthleteData = {
     focusArea: "Right knee",
   },
 
+  // The weekly calendar is the dashboard centerpiece. This is the lighter,
+  // recovery-aware week the agents recommended (knee soreness storyline), with
+  // a look-ahead to the San Jose Open prep. Today = Sat Jun 20.
+  weeklyCalendar: {
+    rangeLabel: "Jun 15 – Jun 21 · This week",
+    upcomingLabel: "Next week",
+    upcoming: [
+      "Mon 22 · Serve clinic",
+      "Wed 24 · Tune-up exhibition",
+      "Jun 30 · Travel → San Jose",
+      "Jul 2 · San Jose Open R1",
+    ],
+    days: [
+      {
+        day: "Mon",
+        date: 15,
+        slots: [{ id: "w1", title: "Technical serve", time: "9:00 AM", kind: "training" }],
+      },
+      {
+        day: "Tue",
+        date: 16,
+        slots: [
+          { id: "w2", title: "Baseline rally", time: "10:00 AM", kind: "training" },
+          { id: "w3", title: "Footwork drills", time: "4:00 PM", kind: "training" },
+        ],
+      },
+      {
+        day: "Wed",
+        date: 17,
+        slots: [{ id: "w4", title: "Mobility + core", time: "9:30 AM", kind: "recovery" }],
+      },
+      {
+        day: "Thu",
+        date: 18,
+        slots: [{ id: "w5", title: "Match-play set", time: "11:00 AM", kind: "match" }],
+      },
+      {
+        day: "Fri",
+        date: 19,
+        slots: [{ id: "w6", title: "Strength block", time: "8:00 AM", kind: "training" }],
+      },
+      {
+        day: "Sat",
+        date: 20,
+        today: true,
+        slots: [
+          { id: "w7", title: "Serve precision", time: "9:00 AM", kind: "training" },
+          { id: "w8", title: "Light hit", time: "3:00 PM", kind: "training" },
+        ],
+      },
+      {
+        day: "Sun",
+        date: 21,
+        slots: [{ id: "w9", title: "Rest + recovery", time: "All day", kind: "recovery" }],
+      },
+    ],
+  },
+
   schedule: {
     events: [
       { id: "e1", title: "San Jose Open · R1", date: "Jul 2", location: "San Jose, CA", kind: "tournament" },

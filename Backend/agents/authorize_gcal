@@ -1,0 +1,40 @@
+"""authorize_google_calendar.py — ONE-TIME setup script. Run this yourself,
+locally, as whoever's calendar events should land on.
+
+    python -m agents.authorize_google_calendar     (from Backend/)
+
+Opens a real browser for Google's consent screen, then saves a refresh
+token so the agent layer can create calendar events headlessly from then
+on without asking again.
+
+Needs google_credentials.json to already exist — see calendar_client.py's
+docstring for how to get one (Google Cloud Console → OAuth Client ID →
+Desktop app).
+"""
+
+from __future__ import annotations
+
+import os
+
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+from .common.calendar_client import CREDENTIALS_PATH, SCOPES, TOKEN_PATH
+
+
+def main():
+    if not os.path.isfile(CREDENTIALS_PATH):
+        raise SystemExit(
+            f"No credentials file found at {CREDENTIALS_PATH}. Download an "
+            "OAuth 2.0 Desktop app Client ID from Google Cloud Console first "
+            "— see calendar_client.py's docstring for the full steps."
+        )
+    flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+    creds = flow.run_local_server(port=0)
+    with open(TOKEN_PATH, "w") as f:
+        f.write(creds.to_json())
+    print(f"Authorized. Token saved to {TOKEN_PATH}.")
+    print("The agent layer can now create calendar events headlessly.")
+
+
+if __name__ == "__main__":
+    main()

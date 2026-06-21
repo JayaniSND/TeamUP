@@ -140,8 +140,8 @@ async def _run_inline(ctx: Context, user: str, user_id: str, dump: str):
 
     summaries: list[str] = []
     for name, texts in _agent_texts(entries).items():
-        if name == "logistics":
-            summaries.append("📅 Logistics: handed your schedule note to the calendar agent.")
+        if name in ("logistics", "scout"):
+            summaries.append(f"↪️ {name.title()}: needs the {name} agent running (start it to enable).")
             continue
         s = await _inline_specialist(name, user_id, " ".join(texts))
         if s:
@@ -172,8 +172,18 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
         await _on_classify_result(ctx, env)
     elif kind == "result":
         await _on_result(ctx, env)
+    elif sender in _specialist_addresses():
+        # A plain (non-envelope) reply from a specialist we forwarded to (e.g. the
+        # interactive Logistics agent). Don't reclassify it as a new user message.
+        ctx.logger.debug("Ignoring stray reply from specialist %s", sender)
     else:
         await _on_user_message(ctx, sender, env)
+
+
+def _specialist_addresses() -> set[str]:
+    names = ("librarian", "recovery", "performance", "sponsorship", "logistics", "scout")
+    addrs = {config.address_for(n) for n in names} | {config.LIBRARIAN_ADDRESS}
+    return {a for a in addrs if a}
 
 
 async def _on_user_message(ctx: Context, sender: str, env: dict):
@@ -211,19 +221,23 @@ async def _handle_action(ctx: Context, user: str, user_id: str, message: str, ag
         if agent in ("recovery", "performance", "sponsorship"):
             summary = await _inline_specialist(agent, user_id, message)
             await ctx.send(user, make_chat(summary or "Done.", end_session=True))
-        else:  # logistics (external) not configured
+        else:  # logistics / scout need their agent running
             await ctx.send(user, make_chat(
                 f"The {agent} agent isn't connected yet.", end_session=True
             ))
         return
+    # Logistics is interactive (it runs its own multi-step flights/hotels/
+    # tournament-pick conversation), so kick it off and point the athlete to it
+    # rather than waiting for a single one-shot result.
     if agent == "logistics":
         await ctx.send(addr, make_chat(encode_envelope(user_id, message)))
         await ctx.send(user, make_chat(
-            "📅 Handed that to the logistics agent — it'll update your schedule.",
+            "🧳 I've handed that to the Logistics agent — it'll walk you through "
+            "tournaments, flights, and hotels. Chat it directly to pick options.",
             end_session=True,
         ))
         return
-    # recovery / performance / sponsorship: run and relay the one result
+    # one-shot worker (recovery / performance / sponsorship / scout): relay result
     req_id = uuid4().hex
     _save(ctx, req_id, {"user": user, "user_id": user_id, "pending": 1, "summaries": []})
     await ctx.send(addr, make_chat(
@@ -258,10 +272,6 @@ async def _on_classify_result(ctx: Context, env: dict):
     for name, texts in triggered.items():
         addr = config.address_for(name)
         if not addr:
-            continue
-        if name == "logistics":
-            # external logistics agent; fire-and-forget (it surfaces on the dashboard).
-            await ctx.send(addr, make_chat(encode_envelope(state["user_id"], " ".join(texts))))
             continue
         await ctx.send(addr, make_chat(encode_envelope(
             state["user_id"], " ".join(texts), kind="run", agent=name, req_id=req_id

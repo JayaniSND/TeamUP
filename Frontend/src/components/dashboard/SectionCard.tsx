@@ -47,7 +47,7 @@ export const SectionCard = memo(function SectionCard({
         className
       )}
     >
-      <header className="mb-3 flex flex-col gap-2 2xl:flex-row 2xl:items-start 2xl:justify-between">
+      <header className="mb-3 flex flex-row items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
           {Icon && (
             <span className="glass-chip grid size-8 shrink-0 place-items-center rounded-xl text-text-muted">
@@ -60,7 +60,7 @@ export const SectionCard = memo(function SectionCard({
           </div>
         </div>
         {(action || secondaryAction) && (
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5 2xl:justify-end">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
             {secondaryAction && (
               <Button variant="ghost" size="sm" onClick={onSecondary}>
                 {secondaryAction}

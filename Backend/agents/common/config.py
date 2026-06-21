@@ -46,7 +46,8 @@ LIBRARIAN_ADDRESS: str = _env_addr("LIBRARIAN_ADDRESS")
 RECOVERY_ADDRESS: str = _env_addr("RECOVERY_ADDRESS")
 PERFORMANCE_ADDRESS: str = _env_addr("PERFORMANCE_ADDRESS")
 SPONSORSHIP_ADDRESS: str = _env_addr("SPONSORSHIP_ADDRESS")
-LOGISTICS_ADDRESS: str = _env_addr("LOGISTICS_ADDRESS")  # external logistics agent
+LOGISTICS_ADDRESS: str = _env_addr("LOGISTICS_ADDRESS")
+SCOUT_ADDRESS: str = _env_addr("SCOUT_ADDRESS")
 
 
 def address_for(agent_name: str) -> str:
@@ -62,6 +63,7 @@ def address_for(agent_name: str) -> str:
         "performance": cfg.PERFORMANCE_ADDRESS,
         "sponsorship": cfg.SPONSORSHIP_ADDRESS,
         "logistics": cfg.LOGISTICS_ADDRESS,
+        "scout": cfg.SCOUT_ADDRESS,
     }.get(agent_name, "")
 
 
@@ -70,9 +72,11 @@ def address_for(agent_name: str) -> str:
 SECTION_AGENTS: dict[str, list[str]] = {
     "recovery": ["recovery"],
     "training": ["recovery", "performance"],
-    "match_results": ["performance", "sponsorship"],
+    "match_results": ["performance", "sponsorship", "scout"],
     "performance": ["performance"],
-    "logistics": ["logistics"],
+    # Logistics is an interactive agent (flights/hotels/tournament pick), not a
+    # one-shot fan-in worker — it's invoked on an explicit request, not every dump.
+    "logistics": [],
     "sponsorship": ["sponsorship"],
     "media_notes": ["sponsorship"],
     "goals": [],
@@ -91,6 +95,8 @@ LIBRARIAN_SEED = os.environ.get("LIBRARIAN_SEED", "baseline-librarian-seed-v1")
 RECOVERY_SEED = os.environ.get("RECOVERY_SEED", "baseline-recovery-seed-v1")
 PERFORMANCE_SEED = os.environ.get("PERFORMANCE_SEED", "baseline-performance-seed-v1")
 SPONSORSHIP_SEED = os.environ.get("SPONSORSHIP_SEED", "baseline-sponsorship-seed-v1")
+LOGISTICS_SEED = os.environ.get("LOGISTICS_SEED", "baseline-logistics-seed-v1")
+SCOUT_SEED = os.environ.get("SCOUT_SEED", "baseline-scout-seed-v1")
 ORCHESTRATOR_SEED = os.environ.get("ORCHESTRATOR_SEED", "baseline-orchestrator-seed-v1")
 
 LIBRARIAN_PORT = int(os.environ.get("LIBRARIAN_PORT", "8001"))
@@ -98,6 +104,12 @@ RECOVERY_PORT = int(os.environ.get("RECOVERY_PORT", "8002"))
 ORCHESTRATOR_PORT = int(os.environ.get("ORCHESTRATOR_PORT", "8003"))
 PERFORMANCE_PORT = int(os.environ.get("PERFORMANCE_PORT", "8004"))
 SPONSORSHIP_PORT = int(os.environ.get("SPONSORSHIP_PORT", "8005"))
+LOGISTICS_PORT = int(os.environ.get("LOGISTICS_PORT", "8006"))
+SCOUT_PORT = int(os.environ.get("SCOUT_PORT", "8007"))
+
+# ── Browserbase (tournament / opponent scraping) ───────────────────
+BROWSERBASE_API_KEY: str = os.environ.get("BROWSERBASE_API_KEY", "").strip()
+BROWSERBASE_PROJECT_ID: str = os.environ.get("BROWSERBASE_PROJECT_ID", "").strip()
 
 
 def require_anthropic_key() -> str:
