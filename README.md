@@ -2,6 +2,8 @@
 
 **SportsMom: Multi-Agent Sports Analytics OS**
 
+Try it here: https://sportsmom.vercel.app/
+
 SportsMom is a network of specialist uAgents that acts as the support team a self-managed individual-sport athlete (tennis first) doesn't have. The athlete dumps a voice note, a photo of a handwritten notebook page, or typed text, and the agent network transcribes it, classifies it, files it, and turns it into overtraining flags, performance trends, opponent scouting reports, sponsorship drafts, and fully researched tournament trips, all reachable through a single ASI:One chat session, with a React dashboard on top for the days you'd rather look than talk.
 
 - Raw input (voice / photo / text) is normalized to plain text.
@@ -193,37 +195,6 @@ Agent ports (local Bureau): Librarian `8001` · Recovery `8002` · Orchestrator 
 - `GET /dashboard/*`: pre-shaped dashboard reads (overview, performance, recovery, matches, training, logistics, sponsorship)
 - `POST /chat`: RAG question answering, grounded in the athlete's own data
 - `POST /admin/seed` / `/admin/clear` / `/admin/backfill`: demo data management
-
-## Submission details
-
-**Public ASI:One shared chat session URL showing the complete workflow:**
-[ ]
-
-**Agentverse Agent Profile URL(s) for each submitted agent:**
-- Orchestrator: [ ]
-- Librarian: [ ]
-- Recovery: [ ]
-- Performance: [ ]
-- Scout: [ ]
-- Sponsorship: [ ]
-- Logistics: [ ]
-
-**Public GitHub repository URL:**
-[ ]
-
-**Short demo video:**
-[ ]
-
-**Brief description of the problem, target user, and outcome produced by the agent:**
-[ ]
-
-## Agentverse submission checklist
-
-- Add this repo link + public URL in the CalHacks AI submission fields.
-- Keep each agent's Agentverse Overview README (`Backend/readmes/`) written as plain-English capability copy: what it does, example queries, sample responses, since that's what ASI:One's agent search actually uses, not technical documentation.
-- Confirm every agent (not just the Orchestrator) has `mailbox=True` and includes the chat protocol with `publish_manifest=True`.
-- For a full demo submission, include a live code link, a 3–5 minute demo video, and any required API keys or setup notes for judges (non-secret placeholders only).
-- Treat the no-custom-frontend ASI:One flow as a hard demo requirement: the full dump → classify → route → specialist → reply loop should work end to end from a single ASI:One chat session, independent of the dashboard.
 
 ## Deployment notes
 
